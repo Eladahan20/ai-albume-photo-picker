@@ -1,0 +1,23 @@
+name = "ai-album-selector-vision"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Optional vars:
+# OPENAI_MODEL = "gpt-4.1-mini"
+# OPENAI_BASE_URL = "https://api.openai.com/v1/chat/completions"
+
+[observability]
+enabled = false
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+persist = true
+head_sampling_rate = 1
