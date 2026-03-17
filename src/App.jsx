@@ -1348,6 +1348,9 @@ export default function App() {
   const [photos, setPhotos] = useState([]);
   const [albumSize, setAlbumSize] = useState(MIN_ALBUM);
   const [themePrompt, setThemePrompt] = useState("");
+  const [isPreparingFiles, setIsPreparingFiles] = useState(false);
+  const [filePrepProgress, setFilePrepProgress] = useState(0);
+  const [filePrepLabel, setFilePrepLabel] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisProgressLabel, setAnalysisProgressLabel] = useState("");
@@ -1490,56 +1493,74 @@ export default function App() {
       return;
     }
 
-    const preparedFiles = [];
-    for (const file of imageFiles) {
-      if (needsHeicConversion(file)) {
-        try {
-          const converted = await convertHeicToJpeg(file);
-          preparedFiles.push(converted);
-          appendLog("info", `Converted HEIC/HEIF to JPEG: ${file.name}`);
-        } catch (error) {
-          const message = errorToMessage(error);
-          if (message.includes("Image is already browser readable")) {
-            preparedFiles.push(file);
-            appendLog("info", `Skipped HEIC conversion for ${file.name} because browser can already decode it.`);
-          } else {
-            appendLog("error", `HEIC conversion failed for ${file.name}: ${message}`);
-            setErrorMessage(`HEIC conversion failed for ${file.name}: ${message}`);
+    setIsPreparingFiles(true);
+    setFilePrepProgress(0);
+    setFilePrepLabel(`Preparing 0/${imageFiles.length} images...`);
+
+    try {
+      const preparedFiles = [];
+      for (let i = 0; i < imageFiles.length; i += 1) {
+        const file = imageFiles[i];
+        setFilePrepLabel(`Preparing ${i + 1}/${imageFiles.length}: ${file.name}`);
+
+        if (needsHeicConversion(file)) {
+          try {
+            const converted = await convertHeicToJpeg(file);
+            preparedFiles.push(converted);
+            appendLog("info", `Converted HEIC/HEIF to JPEG: ${file.name}`);
+          } catch (error) {
+            const message = errorToMessage(error);
+            if (message.includes("Image is already browser readable")) {
+              preparedFiles.push(file);
+              appendLog("info", `Skipped HEIC conversion for ${file.name} because browser can already decode it.`);
+            } else {
+              appendLog("error", `HEIC conversion failed for ${file.name}: ${message}`);
+              setErrorMessage(`HEIC conversion failed for ${file.name}: ${message}`);
+            }
           }
+        } else {
+          preparedFiles.push(file);
         }
-      } else {
-        preparedFiles.push(file);
+
+        setFilePrepProgress(Math.round(((i + 1) / imageFiles.length) * 100));
       }
+
+      if (!preparedFiles.length) {
+        setErrorMessage("No supported image files could be prepared for upload.");
+        return;
+      }
+
+      setFilePrepLabel("Finalizing image import...");
+      setPhotos((prev) => {
+        const cap = MAX_UPLOADS - prev.length;
+        if (cap <= 0) {
+          setErrorMessage(`Upload limit reached (${MAX_UPLOADS} photos).`);
+          return prev;
+        }
+
+        const nextFiles = preparedFiles.slice(0, cap).map((file) => ({
+          id: uid(),
+          file,
+          name: file.name,
+          previewUrl: URL.createObjectURL(file),
+          analysis: null,
+          removed: false
+        }));
+
+        if (preparedFiles.length > cap) {
+          setErrorMessage(`Only ${cap} additional photos were added (max ${MAX_UPLOADS}).`);
+        }
+
+        appendLog("info", `Added ${nextFiles.length} image(s).`);
+        return [...prev, ...nextFiles];
+      });
+    } finally {
+      setTimeout(() => {
+        setIsPreparingFiles(false);
+        setFilePrepProgress(0);
+        setFilePrepLabel("");
+      }, 500);
     }
-
-    if (!preparedFiles.length) {
-      setErrorMessage("No supported image files could be prepared for upload.");
-      return;
-    }
-
-    setPhotos((prev) => {
-      const cap = MAX_UPLOADS - prev.length;
-      if (cap <= 0) {
-        setErrorMessage(`Upload limit reached (${MAX_UPLOADS} photos).`);
-        return prev;
-      }
-
-      const nextFiles = preparedFiles.slice(0, cap).map((file) => ({
-        id: uid(),
-        file,
-        name: file.name,
-        previewUrl: URL.createObjectURL(file),
-        analysis: null,
-        removed: false
-      }));
-
-      if (preparedFiles.length > cap) {
-        setErrorMessage(`Only ${cap} additional photos were added (max ${MAX_UPLOADS}).`);
-      }
-
-      appendLog("info", `Added ${nextFiles.length} image(s).`);
-      return [...prev, ...nextFiles];
-    });
   }
 
   function onDrop(e) {
@@ -1821,6 +1842,19 @@ export default function App() {
       {errorMessage && <div className="error-banner">API/Error: {errorMessage}</div>}
 
       <section className="controls card">
+        {isPreparingFiles ? (
+          <div className="analysis-progress-wrap">
+            <div className="analysis-progress-head">
+              <strong>Preparing Images</strong>
+              <span>{filePrepProgress}%</span>
+            </div>
+            <div className="analysis-progress-track">
+              <div className="analysis-progress-fill" style={{ width: `${filePrepProgress}%` }} />
+            </div>
+            <small>{filePrepLabel}</small>
+          </div>
+        ) : null}
+
         {isAnalyzing ? (
           <div className="analysis-progress-wrap">
             <div className="analysis-progress-head">

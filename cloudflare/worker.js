@@ -18,7 +18,7 @@ function extractFirstJsonArray(text) {
 
 function extractJsonResults(text) {
   const array = extractFirstJsonArray(text);
-  if (Array.isArray(array) && array.length) return array;
+  if (Array.isArray(array)) return array;
 
   const source = String(text || "");
   const objectMatch = source.match(/\{[\s\S]*\}/);
@@ -180,7 +180,7 @@ async function handleCloudflareProxy(body, env, corsHeaders) {
 
     const textOut = responseTextFromPayload(raw);
     const arr = extractJsonResults(textOut);
-    if (!Array.isArray(arr) || !arr.length) {
+    if (!Array.isArray(arr)) {
       console.error(
         JSON.stringify({
           stage: "cloudflare-run-parse-error",
@@ -196,6 +196,29 @@ async function handleCloudflareProxy(body, env, corsHeaders) {
         model: requestedModel,
         route: "ai/run",
         body: `NO_JSON_ARRAY_IN_RESPONSE: ${String(textOut).slice(0, 1000)}`
+      });
+      continue;
+    }
+
+    if (!arr.length) {
+      console.warn(
+        JSON.stringify({
+          stage: "cloudflare-run-empty-result",
+          model: requestedModel,
+          imageIndex: i
+        })
+      );
+      perImageResults.push({
+        index: i,
+        quality: 0,
+        composition: 0,
+        emotion: 0,
+        uniqueness: 0,
+        overall: 0,
+        scene: "unknown",
+        tags: [],
+        reason: "Model returned an empty result for this image.",
+        albumWorthy: false
       });
       continue;
     }
