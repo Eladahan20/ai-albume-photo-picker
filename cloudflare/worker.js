@@ -16,13 +16,36 @@ function extractFirstJsonArray(text) {
   }
 }
 
+function extractJsonResults(text) {
+  const array = extractFirstJsonArray(text);
+  if (Array.isArray(array) && array.length) return array;
+
+  const source = String(text || "");
+  const objectMatch = source.match(/\{[\s\S]*\}/);
+  if (!objectMatch) return null;
+  try {
+    const parsed = JSON.parse(objectMatch[0]);
+    return parsed && typeof parsed === "object" ? [parsed] : null;
+  } catch {
+    return null;
+  }
+}
+
 function responseTextFromPayload(raw) {
   try {
     const parsed = JSON.parse(raw);
     const contentOut = parsed?.choices?.[0]?.message?.content;
     if (typeof contentOut === "string") return contentOut;
     if (Array.isArray(contentOut)) return contentOut.map((part) => part?.text || "").join("\n");
-    return parsed?.result?.response || parsed?.result?.output_text || parsed?.response || parsed?.text || raw;
+    const candidate =
+      parsed?.result?.response ??
+      parsed?.result?.output_text ??
+      parsed?.response ??
+      parsed?.text ??
+      parsed?.result ??
+      parsed;
+    if (typeof candidate === "string") return candidate;
+    return JSON.stringify(candidate);
   } catch {
     return raw;
   }
@@ -81,19 +104,7 @@ function normalizeOpenAIBaseUrl(value) {
 
 async function handleCloudflareProxy(body, env, corsHeaders) {
   const userMsg = body?.messages?.[0];
-  const requestedModel = String(body?.model || "@cf/meta/llama-3.2-11b-vision-instruct").trim();
-  const modelCandidates = Array.from(
-    new Set(
-      [
-        asCfModel(requestedModel),
-        requestedModel,
-        asCfModel(requestedModel.replace(/^@cf\//, "")),
-        "@cf/meta/llama-3.2-11b-vision-instruct",
-        "meta/llama-3.2-11b-vision-instruct",
-        "llama-3.2-11b-vision-instruct"
-      ].filter(Boolean)
-    )
-  );
+  const requestedModel = asCfModel(body?.model || "@cf/meta/llama-3.2-11b-vision-instruct");
   const content = Array.isArray(userMsg?.content) ? userMsg.content : [];
 
   const textBlock = content.find((c) => c?.type === "text");
@@ -103,204 +114,125 @@ async function handleCloudflareProxy(body, env, corsHeaders) {
     return textResponse("WORKER_VALIDATION_ERROR: expected text + image blocks.", 400, corsHeaders);
   }
 
-  const cfMessagesFormatA = [
-    {
-      role: "system",
-      content: "You are a vision photo reviewer. Return only the JSON array requested by the user."
-    },
-    {
-      role: "user",
-      content: textBlock.text
-    },
-    ...imageBlocks.map((img, idx) => ({
-      role: "user",
-      content: [
-        { type: "text", text: `Image ${idx + 1}` },
-        {
-          type: "image_url",
-          image_url: {
-            url: `data:${img.source.media_type || "image/jpeg"};base64,${img.source.data}`
-          }
-        }
-      ]
-    }))
-  ];
+  const perImageResults = [];
+  const perImageErrors = [];
 
-  const cfMessagesFormatB = [
-    {
-      role: "system",
-      content: "You are a vision photo reviewer. Return only the JSON array requested by the user."
-    },
-    {
-      role: "user",
-      content: [
-        { type: "text", text: textBlock.text },
-        ...imageBlocks.map((img) => ({
-          type: "image_url",
-          image_url: {
-            url: `data:${img.source.media_type || "image/jpeg"};base64,${img.source.data}`
-          }
-        }))
-      ]
-    }
-  ];
-
-  async function callCloudflareChat(messages) {
-    let last = null;
-    for (const candidateModel of modelCandidates) {
-      const response = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/ai/v1/chat/completions`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${env.CF_API_TOKEN}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            model: candidateModel,
-            messages,
-            temperature: 0.2,
-            max_tokens: 1400
-          })
-        }
-      );
-      const raw = await response.text();
-      last = { response, raw, candidateModel, route: "ai/v1/chat/completions" };
-      if (response.ok) return last;
-    }
-    return last;
-  }
-
-  async function callCloudflareRun() {
-    let last = null;
-    for (const candidateModel of modelCandidates) {
-      const response = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/ai/run/${candidateModel}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${env.CF_API_TOKEN}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            messages: body?.messages,
-            max_tokens: 1400
-          })
-        }
-      );
-      const raw = await response.text();
-      last = { response, raw, candidateModel, route: "ai/run" };
-      if (response.ok) return last;
-    }
-    return last;
-  }
-
-  let firstAttempt = await callCloudflareChat(cfMessagesFormatA);
-  let { response: cfResponse, raw } = firstAttempt;
-  if (!cfResponse.ok && /Unable to add image/i.test(raw)) {
-    const secondAttempt = await callCloudflareChat(cfMessagesFormatB);
-    cfResponse = secondAttempt.response;
-    raw = secondAttempt.raw;
-    firstAttempt = secondAttempt;
-  }
-
-  if (!cfResponse.ok && imageBlocks.length > 1) {
-    const perImageResults = [];
-    const perImageErrors = [];
-    for (let i = 0; i < imageBlocks.length; i += 1) {
-      const singleImageMessages = [
-        {
-          role: "system",
-          content: "You are a vision photo reviewer. Return only the JSON array requested by the user."
-        },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: `${textBlock.text}\nThis request contains exactly one image. Return array with one object.` },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${imageBlocks[i].source.media_type || "image/jpeg"};base64,${imageBlocks[i].source.data}`
-              }
-            }
-          ]
-        }
-      ];
-
-      const singleCall = await callCloudflareChat(singleImageMessages);
-      if (!singleCall.response.ok) {
-        perImageErrors.push({
-          image: i,
-          status: singleCall.response.status,
-          model: singleCall.candidateModel,
-          route: singleCall.route,
-          body: String(singleCall.raw).slice(0, 700)
-        });
-        continue;
-      }
-
-      const textOut = responseTextFromPayload(singleCall.raw);
-      const arr = extractFirstJsonArray(textOut);
-      if (!Array.isArray(arr) || !arr.length) {
-        perImageErrors.push({
-          image: i,
-          status: 200,
-          body: `NO_JSON_ARRAY_IN_RESPONSE: ${String(textOut).slice(0, 700)}`
-        });
-        continue;
-      }
-      perImageResults.push(arr[0]);
-    }
-
-    if (perImageResults.length === imageBlocks.length) {
-      return textResponse(JSON.stringify(perImageResults), 200, corsHeaders);
-    }
-
-    const runAttemptAfterPerImage = await callCloudflareRun();
-    if (runAttemptAfterPerImage?.response?.ok) {
-      const outputText = responseTextFromPayload(runAttemptAfterPerImage.raw);
-      return textResponse(outputText, 200, corsHeaders);
-    }
-
-    return jsonResponse(
+  for (let i = 0; i < imageBlocks.length; i += 1) {
+    const imageBlock = imageBlocks[i];
+    const imageUrl = `data:${imageBlock.source.media_type || "image/jpeg"};base64,${imageBlock.source.data}`;
+    const requestMessages = [
       {
-        error: "UPSTREAM_MULTI_IMAGE_FAILED_AND_PER_IMAGE_FALLBACK_FAILED",
-        initial_status: cfResponse.status,
-        initial_route: firstAttempt?.route,
-        initial_model: firstAttempt?.candidateModel,
-        initial_body: String(raw).slice(0, 1000),
-        per_image_errors: perImageErrors
+        role: "system",
+        content: "You are a vision photo reviewer. Return only the JSON array requested by the user."
       },
-      400,
-      corsHeaders,
-      { "X-Error-Source": "upstream-cloudflare-ai" }
+      {
+        role: "user",
+        content: `${textBlock.text}\nThis request contains exactly one image. Return an array with exactly one object. Use index ${i}.`
+      }
+    ];
+
+    console.log(
+      JSON.stringify({
+        stage: "cloudflare-run-attempt",
+        model: requestedModel,
+        imageIndex: i,
+        imageCount: imageBlocks.length
+      })
     );
-  }
 
-  if (!cfResponse.ok) {
-    const runAttempt = await callCloudflareRun();
-    if (runAttempt?.response?.ok) {
-      const outputText = responseTextFromPayload(runAttempt.raw);
-      return textResponse(outputText, 200, corsHeaders);
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/ai/run/${requestedModel}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.CF_API_TOKEN}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          messages: requestMessages,
+          image: imageUrl,
+          max_tokens: 1400,
+          temperature: 0.2
+        })
+      }
+    );
+
+    const raw = await response.text();
+    if (!response.ok) {
+      console.error(
+        JSON.stringify({
+          stage: "cloudflare-run-error",
+          model: requestedModel,
+          imageIndex: i,
+          status: response.status,
+          body: String(raw).slice(0, 1200)
+        })
+      );
+      perImageErrors.push({
+        image: i,
+        status: response.status,
+        model: requestedModel,
+        route: "ai/run",
+        body: String(raw).slice(0, 1000)
+      });
+      continue;
     }
+
+    const textOut = responseTextFromPayload(raw);
+    const arr = extractJsonResults(textOut);
+    if (!Array.isArray(arr) || !arr.length) {
+      console.error(
+        JSON.stringify({
+          stage: "cloudflare-run-parse-error",
+          model: requestedModel,
+          imageIndex: i,
+          raw: String(raw).slice(0, 1200),
+          body: String(textOut).slice(0, 1200)
+        })
+      );
+      perImageErrors.push({
+        image: i,
+        status: 200,
+        model: requestedModel,
+        route: "ai/run",
+        body: `NO_JSON_ARRAY_IN_RESPONSE: ${String(textOut).slice(0, 1000)}`
+      });
+      continue;
+    }
+
+    perImageResults.push(arr[0]);
   }
 
-  if (!cfResponse.ok) {
-    return textResponse(raw, cfResponse.status, corsHeaders, {
+  if (perImageResults.length === imageBlocks.length) {
+    return textResponse(JSON.stringify(perImageResults), 200, corsHeaders);
+  }
+
+  console.error(
+    JSON.stringify({
+      stage: "cloudflare-proxy-failed",
+      model: requestedModel,
+      imageCount: imageBlocks.length,
+      completed: perImageResults.length,
+      errors: perImageErrors
+    })
+  );
+
+  return jsonResponse(
+    {
+      error: "UPSTREAM_CLOUDFLARE_RUN_FAILED",
+      model: requestedModel,
+      completed: perImageResults.length,
+      expected: imageBlocks.length,
+      per_image_errors: perImageErrors
+    },
+    400,
+    corsHeaders,
+    {
       "X-Error-Source": "upstream-cloudflare-ai",
-      "X-Upstream-Route": firstAttempt?.route || "unknown",
-      "X-Upstream-Model": firstAttempt?.candidateModel || "unknown"
-    });
-  }
-
-  let outputText = raw;
-  try {
-    outputText = responseTextFromPayload(raw);
-  } catch {
-    outputText = raw;
-  }
-
-  return textResponse(outputText, 200, corsHeaders);
+      "X-Upstream-Route": "ai/run",
+      "X-Upstream-Model": requestedModel
+    }
+  );
 }
 
 async function handleOpenAIProxy(body, env, corsHeaders) {
@@ -336,6 +268,14 @@ async function handleOpenAIProxy(body, env, corsHeaders) {
 
   const raw = await response.text();
   if (!response.ok) {
+    console.error(
+      JSON.stringify({
+        stage: "openai-proxy-error",
+        model,
+        status: response.status,
+        body: String(raw).slice(0, 1200)
+      })
+    );
     return textResponse(raw, response.status, corsHeaders, {
       "X-Error-Source": "upstream-openai",
       "X-Upstream-Model": model
