@@ -1436,20 +1436,24 @@ export default function App() {
   }, [maxPerCluster]);
 
   const activePhotos = useMemo(() => photos.filter((p) => !p.removed), [photos]);
+  const activePhotosById = useMemo(() => new Map(activePhotos.map((photo) => [photo.id, photo])), [activePhotos]);
+  const selectedPhotos = useMemo(
+    () => selectedIds.map((id) => activePhotosById.get(id)).filter(Boolean),
+    [activePhotosById, selectedIds]
+  );
 
   const canAdvanceToConfigure = activePhotos.length > 0 && !isPreparingFiles;
   const canShowResults = selectedIds.length > 0 || isAnalyzing;
 
   const stats = useMemo(() => {
-    const selected = activePhotos.filter((p) => selectedIds.includes(p.id));
-    const avg = average(selected.map((p) => p.analysis?.adjustedOverall || 0));
+    const avg = average(selectedPhotos.map((p) => p.analysis?.adjustedOverall || 0));
     return {
-      selected: selected.length,
+      selected: selectedPhotos.length,
       uploaded: activePhotos.length,
       avg,
-      rate: activePhotos.length ? (selected.length / activePhotos.length) * 100 : 0
+      rate: activePhotos.length ? (selectedPhotos.length / activePhotos.length) * 100 : 0
     };
-  }, [activePhotos, selectedIds]);
+  }, [activePhotos.length, selectedPhotos]);
 
   const activePhoto = photos.find((p) => p.id === activePhotoId) || null;
   const lookalikeHint =
@@ -2247,9 +2251,7 @@ export default function App() {
           <section className="preview card">
             <h2>Preview Grid</h2>
             <div className="grid">
-              {activePhotos
-                .filter((p) => selectedIds.includes(p.id))
-                .map((photo) => (
+              {selectedPhotos.map((photo) => (
                   <article key={photo.id} className="photo-card" onClick={() => setActivePhotoId(photo.id)}>
                     <img src={photo.previewUrl} alt={photo.name} />
                     <button
