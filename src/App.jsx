@@ -1593,6 +1593,20 @@ export default function App() {
     setSelectedIds((prev) => prev.filter((item) => item !== id));
   }
 
+  function switchSelectedPhoto(id) {
+    const replacement = activePhotos
+      .filter((photo) => !selectedIds.includes(photo.id) && photo.analysis)
+      .sort((a, b) => (b.analysis?.adjustedOverall || 0) - (a.analysis?.adjustedOverall || 0))[0];
+
+    if (!replacement) {
+      setErrorMessage("No alternative analyzed photo is available to switch in.");
+      return;
+    }
+
+    setSelectedIds((prev) => prev.map((item) => (item === id ? replacement.id : item)));
+    appendLog("info", `Switched out one selected photo for ${replacement.name}.`);
+  }
+
   function stopAnalysis() {
     if (analysisAbortRef.current) {
       analysisAbortRef.current.abort();
@@ -2218,6 +2232,16 @@ export default function App() {
                 .map((photo) => (
                   <article key={photo.id} className="photo-card" onClick={() => setActivePhotoId(photo.id)}>
                     <img src={photo.previewUrl} alt={photo.name} />
+                    <button
+                      type="button"
+                      className="switch-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        switchSelectedPhoto(photo.id);
+                      }}
+                    >
+                      Switch
+                    </button>
                     <button
                       type="button"
                       className="remove-btn"

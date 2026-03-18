@@ -362,7 +362,20 @@ input[type="range"] {
   padding: 6px 8px;
 }
 
-.photo-card:hover .remove-btn {
+.switch-btn {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  border: 1px solid var(--accent-deep);
+  background: #fff7e5;
+  color: var(--ink);
+  padding: 6px 8px;
+}
+
+.photo-card:hover .remove-btn,
+.photo-card:hover .switch-btn {
   opacity: 1;
 }
 
