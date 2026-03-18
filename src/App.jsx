@@ -1363,6 +1363,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
   const [clusterReport, setClusterReport] = useState([]);
+  const [scoredPhotos, setScoredPhotos] = useState([]);
   const [openClusterIds, setOpenClusterIds] = useState([]);
   const [diagnosticInsights, setDiagnosticInsights] = useState([]);
   const [activePhotoId, setActivePhotoId] = useState(null);
@@ -1594,9 +1595,19 @@ export default function App() {
   }
 
   function switchSelectedPhoto(id) {
-    const replacement = activePhotos
-      .filter((photo) => !selectedIds.includes(photo.id) && photo.analysis)
-      .sort((a, b) => (b.analysis?.adjustedOverall || 0) - (a.analysis?.adjustedOverall || 0))[0];
+    const selectedSet = new Set(selectedIds);
+    const selectedClusterIds = new Set(
+      scoredPhotos
+        .filter((photo) => selectedSet.has(photo.id))
+        .map((photo) => photo.analysis?.clusterId)
+        .filter((value) => value !== undefined && value !== null)
+    );
+
+    const available = scoredPhotos.filter((photo) => !selectedSet.has(photo.id));
+    const fromUnusedClusters = available.filter((photo) => !selectedClusterIds.has(photo.analysis?.clusterId));
+    const fromUsedClusters = available.filter((photo) => selectedClusterIds.has(photo.analysis?.clusterId));
+
+    const replacement = [...fromUnusedClusters, ...fromUsedClusters][0];
 
     if (!replacement) {
       setErrorMessage("No alternative analyzed photo is available to switch in.");
@@ -1628,6 +1639,7 @@ export default function App() {
     setErrorMessage("");
     setLogs([]);
     setClusterReport([]);
+    setScoredPhotos([]);
     setDiagnosticInsights([]);
     setAnalysisProgress(0);
     setAnalysisProgressLabel("Preparing analysis...");
@@ -1795,6 +1807,14 @@ export default function App() {
         })
       );
 
+      const rankedScoredPhotos = activePhotos
+        .map((photo, index) => {
+          const analysis = scored.find((item) => item.index === index);
+          return analysis ? { id: photo.id, name: photo.name, previewUrl: photo.previewUrl, analysis } : null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => (b.analysis?.adjustedOverall || 0) - (a.analysis?.adjustedOverall || 0));
+      setScoredPhotos(rankedScoredPhotos);
       setSelectedIds(selected);
       const scoredByIndex = new Map(scored.map((s) => [s.index, s]));
       const clusterRows = (diagnostics?.clusters || []).map((cluster) => ({
