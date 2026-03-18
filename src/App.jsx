@@ -1364,6 +1364,9 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [clusterReport, setClusterReport] = useState([]);
   const [scoredPhotos, setScoredPhotos] = useState([]);
+  const [usedSwitchPhotoIds, setUsedSwitchPhotoIds] = useState([]);
+  const [switchTargetId, setSwitchTargetId] = useState(null);
+  const [switchPage, setSwitchPage] = useState(0);
   const [openClusterIds, setOpenClusterIds] = useState([]);
   const [diagnosticInsights, setDiagnosticInsights] = useState([]);
   const [activePhotoId, setActivePhotoId] = useState(null);
@@ -1456,6 +1459,26 @@ export default function App() {
   }, [activePhotos.length, selectedPhotos]);
 
   const activePhoto = photos.find((p) => p.id === activePhotoId) || null;
+  const switchTargetPhoto = switchTargetId ? activePhotosById.get(switchTargetId) || null : null;
+  const switchCandidates = useMemo(() => {
+    const selectedSet = new Set(selectedIds);
+    const usedSet = new Set(usedSwitchPhotoIds);
+    const bestPerCluster = new Map();
+
+    for (const photo of scoredPhotos) {
+      const clusterId = photo.analysis?.clusterId;
+      if (clusterId === undefined || clusterId === null) continue;
+      if (selectedSet.has(photo.id) || usedSet.has(photo.id)) continue;
+      if (!bestPerCluster.has(clusterId)) {
+        bestPerCluster.set(clusterId, photo);
+      }
+    }
+
+    return Array.from(bestPerCluster.values()).sort(
+      (a, b) => (b.analysis?.adjustedOverall || 0) - (a.analysis?.adjustedOverall || 0)
+    );
+  }, [scoredPhotos, selectedIds, usedSwitchPhotoIds]);
+  const visibleSwitchCandidates = switchCandidates.slice(0, (switchPage + 1) * 5);
   const lookalikeHint =
     lookalikeThreshold <= 0.8
       ? "Loose: keeps more similar shots. Example: burst photos with slight pose changes can both stay."
@@ -1598,28 +1621,27 @@ export default function App() {
     setSelectedIds((prev) => prev.filter((item) => item !== id));
   }
 
-  function switchSelectedPhoto(id) {
-    const selectedSet = new Set(selectedIds);
-    const selectedClusterIds = new Set(
-      scoredPhotos
-        .filter((photo) => selectedSet.has(photo.id))
-        .map((photo) => photo.analysis?.clusterId)
-        .filter((value) => value !== undefined && value !== null)
-    );
+  function openSwitchDialog(id) {
+    setSwitchTargetId(id);
+    setSwitchPage(0);
+  }
 
-    const available = scoredPhotos.filter((photo) => !selectedSet.has(photo.id));
-    const fromUnusedClusters = available.filter((photo) => !selectedClusterIds.has(photo.analysis?.clusterId));
-    const fromUsedClusters = available.filter((photo) => selectedClusterIds.has(photo.analysis?.clusterId));
+  function closeSwitchDialog() {
+    setSwitchTargetId(null);
+    setSwitchPage(0);
+  }
 
-    const replacement = [...fromUnusedClusters, ...fromUsedClusters][0];
-
-    if (!replacement) {
-      setErrorMessage("No alternative analyzed photo is available to switch in.");
+  function applySwitchReplacement(replacementId) {
+    const replacement = activePhotosById.get(replacementId);
+    if (!switchTargetId || !replacement) {
+      setErrorMessage("Selected replacement image is no longer available.");
       return;
     }
 
-    setSelectedIds((prev) => prev.map((item) => (item === id ? replacement.id : item)));
+    setSelectedIds((prev) => prev.map((item) => (item === switchTargetId ? replacementId : item)));
+    setUsedSwitchPhotoIds((prev) => [...prev, replacementId]);
     appendLog("info", `Switched out one selected photo for ${replacement.name}.`);
+    closeSwitchDialog();
   }
 
   function stopAnalysis() {
@@ -1644,6 +1666,7 @@ export default function App() {
     setLogs([]);
     setClusterReport([]);
     setScoredPhotos([]);
+    setUsedSwitchPhotoIds([]);
     setDiagnosticInsights([]);
     setAnalysisProgress(0);
     setAnalysisProgressLabel("Preparing analysis...");
@@ -2259,7 +2282,7 @@ export default function App() {
                       className="switch-btn"
                       onClick={(e) => {
                         e.stopPropagation();
-                        switchSelectedPhoto(photo.id);
+                        openSwitchDialog(photo.id);
                       }}
                     >
                       Switch
@@ -2355,6 +2378,47 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {switchTargetPhoto ? (
+        <div className="modal-backdrop" onClick={closeSwitchDialog}>
+          <div className="modal switch-modal" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="close" onClick={closeSwitchDialog}>
+              Close
+            </button>
+            <h3>Switch Photo</h3>
+            <p>Choose a replacement from a different cluster. Previously used replacements will not appear again.</p>
+            <div className="switch-target">
+              <img src={switchTargetPhoto.previewUrl} alt={switchTargetPhoto.name} />
+              <div>
+                <strong>{switchTargetPhoto.name}</strong>
+                <small>Current score: {Math.round(switchTargetPhoto.analysis?.adjustedOverall || 0)}</small>
+              </div>
+            </div>
+            <div className="switch-options">
+              {visibleSwitchCandidates.map((photo) => (
+                <article key={photo.id} className="switch-option">
+                  <img src={photo.previewUrl} alt={photo.name} />
+                  <div className="switch-option-meta">
+                    <strong>{photo.name}</strong>
+                    <small>
+                      Cluster {Number(photo.analysis?.clusterId ?? 0) + 1} | score {Math.round(photo.analysis?.adjustedOverall || 0)}
+                    </small>
+                  </div>
+                  <button type="button" className="analyze-btn" onClick={() => applySwitchReplacement(photo.id)}>
+                    Use This Photo
+                  </button>
+                </article>
+              ))}
+            </div>
+            {!visibleSwitchCandidates.length ? <p>No more unused replacement candidates are available.</p> : null}
+            {visibleSwitchCandidates.length < switchCandidates.length ? (
+              <button type="button" className="secondary-btn" onClick={() => setSwitchPage((prev) => prev + 1)}>
+                Load More Alternatives
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <footer>
         Provider: <code>{provider}</code>
