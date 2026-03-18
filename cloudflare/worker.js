@@ -31,6 +31,73 @@ function extractJsonResults(text) {
   }
 }
 
+function parseLooseBoolean(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["true", "yes", "1"].includes(normalized)) return true;
+  if (["false", "no", "0"].includes(normalized)) return false;
+  return null;
+}
+
+function parseMarkdownResult(text, indexHint) {
+  const source = String(text || "");
+  if (!source.trim()) return null;
+
+  const readNumber = (label) => {
+    const match = source.match(new RegExp(`\\*\\*${label}:\\*\\*\\s*([0-9]{1,3})`, "i"));
+    return match ? Number(match[1]) : 0;
+  };
+  const readText = (label) => {
+    const match = source.match(new RegExp(`\\*\\*${label}:\\*\\*\\s*([^\\n]+)`, "i"));
+    return match ? match[1].trim() : "";
+  };
+
+  const tagsMatch = source.match(/\*\*Tags:\*\*\s*\[([^\]]*)\]/i);
+  const tags = tagsMatch
+    ? tagsMatch[1]
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+    : [];
+
+  const parsedBoolean = parseLooseBoolean(readText("AlbumWorthy"));
+  const looksStructured =
+    /\*\*Quality:\*\*/i.test(source) ||
+    /\*\*Composition:\*\*/i.test(source) ||
+    /\*\*Overall:\*\*/i.test(source);
+
+  if (!looksStructured) return null;
+
+  return [
+    {
+      index: readNumber("Index") || indexHint,
+      quality: readNumber("Quality"),
+      composition: readNumber("Composition"),
+      emotion: readNumber("Emotion"),
+      uniqueness: readNumber("Uniqueness"),
+      overall: readNumber("Overall"),
+      scene: readText("Scene") || "unknown",
+      tags,
+      reason: readText("Reason") || "Model returned a non-JSON formatted review.",
+      albumWorthy: parsedBoolean ?? false
+    }
+  ];
+}
+
+function makeFallbackResult(index, reason) {
+  return {
+    index,
+    quality: 0,
+    composition: 0,
+    emotion: 0,
+    uniqueness: 0,
+    overall: 0,
+    scene: "unknown",
+    tags: [],
+    reason,
+    albumWorthy: false
+  };
+}
+
 function responseTextFromPayload(raw) {
   try {
     const parsed = JSON.parse(raw);
@@ -115,7 +182,6 @@ async function handleCloudflareProxy(body, env, corsHeaders) {
   }
 
   const perImageResults = [];
-  const perImageErrors = [];
 
   for (let i = 0; i < imageBlocks.length; i += 1) {
     const imageBlock = imageBlocks[i];
@@ -140,24 +206,43 @@ async function handleCloudflareProxy(body, env, corsHeaders) {
       })
     );
 
-    const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/ai/run/${requestedModel}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.CF_API_TOKEN}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          messages: requestMessages,
-          image: imageUrl,
-          max_tokens: 1400,
-          temperature: 0.2
-        })
-      }
-    );
+    let response = null;
+    let raw = "";
+    let attempt = 0;
+    while (attempt < 2) {
+      attempt += 1;
+      response = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/ai/run/${requestedModel}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${env.CF_API_TOKEN}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            messages: requestMessages,
+            image: imageUrl,
+            max_tokens: 1400,
+            temperature: 0.2
+          })
+        }
+      );
 
-    const raw = await response.text();
+      raw = await response.text();
+      if (response.ok || response.status !== 408 || attempt >= 2) {
+        break;
+      }
+      console.warn(
+        JSON.stringify({
+          stage: "cloudflare-run-timeout-retry",
+          model: requestedModel,
+          imageIndex: i,
+          attempt,
+          status: response.status
+        })
+      );
+    }
+
     if (!response.ok) {
       console.error(
         JSON.stringify({
@@ -168,18 +253,14 @@ async function handleCloudflareProxy(body, env, corsHeaders) {
           body: String(raw).slice(0, 1200)
         })
       );
-      perImageErrors.push({
-        image: i,
-        status: response.status,
-        model: requestedModel,
-        route: "ai/run",
-        body: String(raw).slice(0, 1000)
-      });
+      perImageResults.push(
+        makeFallbackResult(i, `Cloudflare AI request failed for this image (${response.status}).`)
+      );
       continue;
     }
 
     const textOut = responseTextFromPayload(raw);
-    const arr = extractJsonResults(textOut);
+    const arr = extractJsonResults(textOut) || parseMarkdownResult(textOut, i);
     if (!Array.isArray(arr)) {
       console.error(
         JSON.stringify({
@@ -190,13 +271,9 @@ async function handleCloudflareProxy(body, env, corsHeaders) {
           body: String(textOut).slice(0, 1200)
         })
       );
-      perImageErrors.push({
-        image: i,
-        status: 200,
-        model: requestedModel,
-        route: "ai/run",
-        body: `NO_JSON_ARRAY_IN_RESPONSE: ${String(textOut).slice(0, 1000)}`
-      });
+      perImageResults.push(
+        makeFallbackResult(i, "Model returned an unparseable response for this image.")
+      );
       continue;
     }
 
@@ -208,54 +285,17 @@ async function handleCloudflareProxy(body, env, corsHeaders) {
           imageIndex: i
         })
       );
-      perImageResults.push({
-        index: i,
-        quality: 0,
-        composition: 0,
-        emotion: 0,
-        uniqueness: 0,
-        overall: 0,
-        scene: "unknown",
-        tags: [],
-        reason: "Model returned an empty result for this image.",
-        albumWorthy: false
-      });
+      perImageResults.push(makeFallbackResult(i, "Model returned an empty result for this image."));
       continue;
     }
 
     perImageResults.push(arr[0]);
   }
 
-  if (perImageResults.length === imageBlocks.length) {
-    return textResponse(JSON.stringify(perImageResults), 200, corsHeaders);
-  }
-
-  console.error(
-    JSON.stringify({
-      stage: "cloudflare-proxy-failed",
-      model: requestedModel,
-      imageCount: imageBlocks.length,
-      completed: perImageResults.length,
-      errors: perImageErrors
-    })
-  );
-
-  return jsonResponse(
-    {
-      error: "UPSTREAM_CLOUDFLARE_RUN_FAILED",
-      model: requestedModel,
-      completed: perImageResults.length,
-      expected: imageBlocks.length,
-      per_image_errors: perImageErrors
-    },
-    400,
-    corsHeaders,
-    {
-      "X-Error-Source": "upstream-cloudflare-ai",
-      "X-Upstream-Route": "ai/run",
-      "X-Upstream-Model": requestedModel
-    }
-  );
+  return textResponse(JSON.stringify(perImageResults), 200, corsHeaders, {
+    "X-Upstream-Route": "ai/run",
+    "X-Upstream-Model": requestedModel
+  });
 }
 
 async function handleOpenAIProxy(body, env, corsHeaders) {
