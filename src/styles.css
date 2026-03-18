@@ -88,6 +88,10 @@ textarea {
   background: #fbf2df;
 }
 
+.step.done span {
+  background: var(--soft);
+}
+
 .card {
   border: 1px solid var(--line);
   background: rgba(255, 251, 243, 0.92);
@@ -124,6 +128,7 @@ textarea {
 
 .upload-zone button,
 .analyze-btn,
+.secondary-btn,
 .close {
   border: 1px solid var(--accent-deep);
   background: var(--accent);
@@ -142,9 +147,42 @@ textarea {
   cursor: pointer;
 }
 
+.secondary-btn {
+  background: #f7f2e8;
+  color: var(--ink);
+}
+
 .config-grid {
   display: grid;
   gap: 12px;
+}
+
+.step-screen {
+  display: grid;
+  gap: 14px;
+}
+
+.step-screen-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+}
+
+.step-screen-head h2 {
+  margin: 4px 0 0;
+}
+
+.step-screen-head p {
+  max-width: 520px;
+  margin: 0;
+  opacity: 0.82;
+}
+
+.step-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 .analysis-progress-wrap {
@@ -248,21 +286,30 @@ input[type="range"] {
 
 .cluster-item {
   border: 1px solid var(--line);
-  padding: 8px;
   background: #fffdf8;
+}
+
+.cluster-toggle {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 8px;
+  text-align: left;
+  cursor: pointer;
 }
 
 .cluster-head {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 
 .cluster-thumbs {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
   gap: 8px;
+  padding: 0 8px 8px;
 }
 
 .cluster-thumb {
@@ -406,5 +453,11 @@ footer {
   .stats,
   .progress {
     grid-template-columns: 1fr;
+  }
+
+  .step-screen-head,
+  .step-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

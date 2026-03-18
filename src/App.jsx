@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const MAX_UPLOADS = 1000;
-const BATCH_SIZE = 3;
+const DEFAULT_BATCH_SIZE = 3;
 const MIN_ALBUM = 10;
 const MAX_ALBUM = 100;
 const CLOUDFLARE_ENDPOINT = import.meta.env.VITE_CLOUDFLARE_VISION_ENDPOINT || "/api/cloudflare/vision";
@@ -36,6 +36,10 @@ function normalizeEndpointUrl(raw) {
 
 function isAbsoluteHttpUrl(value) {
   return /^https?:\/\//i.test(String(value || "").trim());
+}
+
+function getBatchSizeForProvider(provider) {
+  return provider === "cloudflare" ? 1 : DEFAULT_BATCH_SIZE;
 }
 
 function errorToMessage(error) {
@@ -1351,6 +1355,7 @@ export default function App() {
   const [isPreparingFiles, setIsPreparingFiles] = useState(false);
   const [filePrepProgress, setFilePrepProgress] = useState(0);
   const [filePrepLabel, setFilePrepLabel] = useState("");
+  const [currentStep, setCurrentStep] = useState(1);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisProgressLabel, setAnalysisProgressLabel] = useState("");
@@ -1358,6 +1363,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
   const [clusterReport, setClusterReport] = useState([]);
+  const [openClusterIds, setOpenClusterIds] = useState([]);
   const [diagnosticInsights, setDiagnosticInsights] = useState([]);
   const [activePhotoId, setActivePhotoId] = useState(null);
   const [lookalikeThreshold, setLookalikeThreshold] = useState(() => Number(localStorage.getItem("picker_lookalike_threshold") || 0.86));
@@ -1430,13 +1436,8 @@ export default function App() {
 
   const activePhotos = useMemo(() => photos.filter((p) => !p.removed), [photos]);
 
-  const stage = isAnalyzing
-    ? 3
-    : selectedIds.length
-      ? 4
-      : photos.length
-        ? 2
-        : 1;
+  const canAdvanceToConfigure = activePhotos.length > 0 && !isPreparingFiles;
+  const canShowResults = selectedIds.length > 0 || isAnalyzing;
 
   const stats = useMemo(() => {
     const selected = activePhotos.filter((p) => selectedIds.includes(p.id));
@@ -1474,6 +1475,18 @@ export default function App() {
       : maxPerCluster === 2
         ? "Strict: up to two photos per cluster if they are meaningfully different."
         : "Flexible: allows more from the same cluster when album size is large.";
+
+  useEffect(() => {
+    setOpenClusterIds([]);
+  }, [clusterReport]);
+
+  useEffect(() => {
+    if (!activePhotos.length && currentStep !== 1) {
+      setCurrentStep(1);
+    } else if (currentStep === 3 && !canShowResults) {
+      setCurrentStep(canAdvanceToConfigure ? 2 : 1);
+    }
+  }, [activePhotos.length, canAdvanceToConfigure, canShowResults, currentStep]);
 
   function appendLog(level, message) {
     setLogs((prev) => [...prev, `[${nowStamp()}] ${level.toUpperCase()}: ${message}`]);
@@ -1587,6 +1600,10 @@ export default function App() {
     }
   }
 
+  function toggleCluster(clusterId) {
+    setOpenClusterIds((prev) => (prev.includes(clusterId) ? prev.filter((id) => id !== clusterId) : [...prev, clusterId]));
+  }
+
   async function startAnalysis() {
     if (!activePhotos.length) {
       setErrorMessage("Upload at least one image before analyzing.");
@@ -1604,9 +1621,10 @@ export default function App() {
     const abortController = new AbortController();
     analysisAbortRef.current = abortController;
 
+    const batchSize = getBatchSizeForProvider(provider);
     const batches = [];
-    for (let i = 0; i < activePhotos.length; i += BATCH_SIZE) {
-      batches.push(activePhotos.slice(i, i + BATCH_SIZE));
+    for (let i = 0; i < activePhotos.length; i += batchSize) {
+      batches.push(activePhotos.slice(i, i + batchSize));
     }
 
     const byId = new Map(activePhotos.map((p, idx) => [p.id, idx]));
@@ -1808,6 +1826,7 @@ export default function App() {
       appendLog("success", `Selected ${selected.length} photos after relevance + metadata + uniqueness MMR pass.`);
       setAnalysisProgress(100);
       setAnalysisProgressLabel("Done");
+      setCurrentStep(3);
     } catch (error) {
       if (isAbortError(error)) {
         appendLog("info", "Analysis stopped by user.");
@@ -1831,58 +1850,132 @@ export default function App() {
       </header>
 
       <section className="progress">
-        {["Upload", "Configure", "Analyzing", "Preview"].map((label, idx) => (
-          <div key={label} className={`step ${stage >= idx + 1 ? "active" : ""}`}>
-            <span>{idx + 1}</span>
-            <p>{label}</p>
-          </div>
-        ))}
+        {["Upload", "Configure", "Results"].map((label, idx) => {
+          const stepNumber = idx + 1;
+          const isCompleted =
+            stepNumber === 1
+              ? canAdvanceToConfigure
+              : stepNumber === 2
+                ? canShowResults
+                : selectedIds.length > 0;
+          return (
+            <div key={label} className={`step ${currentStep === stepNumber ? "active" : ""} ${isCompleted ? "done" : ""}`}>
+              <span>{stepNumber}</span>
+              <p>{label}</p>
+            </div>
+          );
+        })}
       </section>
 
       {errorMessage && <div className="error-banner">API/Error: {errorMessage}</div>}
 
-      <section className="controls card">
-        {isPreparingFiles ? (
-          <div className="analysis-progress-wrap">
-            <div className="analysis-progress-head">
-              <strong>Preparing Images</strong>
-              <span>{filePrepProgress}%</span>
+      {currentStep === 1 ? (
+        <section className="step-screen card">
+          <div className="step-screen-head">
+            <div>
+              <small>Step 1</small>
+              <h2>Upload Photos</h2>
             </div>
-            <div className="analysis-progress-track">
-              <div className="analysis-progress-fill" style={{ width: `${filePrepProgress}%` }} />
-            </div>
-            <small>{filePrepLabel}</small>
+            <p>Add the full trip folder first. Once the import is done, move to configuration.</p>
           </div>
-        ) : null}
 
-        {isAnalyzing ? (
-          <div className="analysis-progress-wrap">
-            <div className="analysis-progress-head">
-              <strong>Processing Progress</strong>
-              <span>{analysisProgress}%</span>
+          {isPreparingFiles ? (
+            <div className="analysis-progress-wrap">
+              <div className="analysis-progress-head">
+                <strong>Preparing Images</strong>
+                <span>{filePrepProgress}%</span>
+              </div>
+              <div className="analysis-progress-track">
+                <div className="analysis-progress-fill" style={{ width: `${filePrepProgress}%` }} />
+              </div>
+              <small>{filePrepLabel}</small>
             </div>
-            <div className="analysis-progress-track">
-              <div className="analysis-progress-fill" style={{ width: `${analysisProgress}%` }} />
-            </div>
-            <small>{analysisProgressLabel}</small>
+          ) : null}
+
+          <div className="upload-zone" onClick={() => inputRef.current?.click()}>
+            <strong>Drag & drop images here</strong>
+            <p>Supports PNG, JPEG, WebP, GIF, BMP, TIFF, HEIC, HEIF, and browser-supported image types. Max 1,000.</p>
+            <button type="button">Choose Files</button>
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={onPickFiles}
+              hidden
+            />
           </div>
-        ) : null}
 
-        <div className="upload-zone" onClick={() => inputRef.current?.click()}>
-          <strong>Drag & drop images here</strong>
-          <p>Supports PNG, JPEG, WebP, GIF, BMP, TIFF, HEIC, HEIF, and browser-supported image types. Max 1,000.</p>
-          <button type="button">Choose Files</button>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={onPickFiles}
-            hidden
-          />
-        </div>
+          <section className="stats card">
+            <div>
+              <small>Imported</small>
+              <strong>{stats.uploaded}</strong>
+            </div>
+            <div>
+              <small>Ready For Next Step</small>
+              <strong>{canAdvanceToConfigure ? "Yes" : "No"}</strong>
+            </div>
+            <div>
+              <small>Preparing</small>
+              <strong>{isPreparingFiles ? `${filePrepProgress}%` : "Done"}</strong>
+            </div>
+            <div>
+              <small>Album Goal</small>
+              <strong>{albumSize}</strong>
+            </div>
+          </section>
 
-        <div className="config-grid">
+          <div className="step-actions">
+            <button type="button" className="analyze-btn" onClick={() => setCurrentStep(2)} disabled={!canAdvanceToConfigure}>
+              Continue To Configure
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {currentStep === 2 ? (
+        <section className="step-screen card">
+          <div className="step-screen-head">
+            <div>
+              <small>Step 2</small>
+              <h2>Configure Curation</h2>
+            </div>
+            <p>Choose the album size, provider, and selection rules before running the curation pass.</p>
+          </div>
+
+          {isAnalyzing ? (
+            <div className="analysis-progress-wrap">
+              <div className="analysis-progress-head">
+                <strong>Processing Progress</strong>
+                <span>{analysisProgress}%</span>
+              </div>
+              <div className="analysis-progress-track">
+                <div className="analysis-progress-fill" style={{ width: `${analysisProgress}%` }} />
+              </div>
+              <small>{analysisProgressLabel}</small>
+            </div>
+          ) : null}
+
+          <section className="stats card">
+            <div>
+              <small>Imported</small>
+              <strong>{stats.uploaded}</strong>
+            </div>
+            <div>
+              <small>Selected</small>
+              <strong>{stats.selected}</strong>
+            </div>
+            <div>
+              <small>Average Score</small>
+              <strong>{stats.avg.toFixed(1)}</strong>
+            </div>
+            <div>
+              <small>Selection Rate</small>
+              <strong>{stats.rate.toFixed(1)}%</strong>
+            </div>
+          </section>
+
+          <div className="config-grid">
           <label>
             Album Size ({albumSize} photos)
             <input
@@ -2075,100 +2168,126 @@ export default function App() {
               Stop Analysis
             </button>
           ) : null}
+          <button type="button" className="secondary-btn" onClick={() => setCurrentStep(1)} disabled={isAnalyzing}>
+            Back To Upload
+          </button>
         </div>
-      </section>
-
-      <section className="stats card">
-        <div>
-          <small>Selected</small>
-          <strong>{stats.selected}</strong>
-        </div>
-        <div>
-          <small>Total Uploaded</small>
-          <strong>{stats.uploaded}</strong>
-        </div>
-        <div>
-          <small>Average Score</small>
-          <strong>{stats.avg.toFixed(1)}</strong>
-        </div>
-        <div>
-          <small>Selection Rate</small>
-          <strong>{stats.rate.toFixed(1)}%</strong>
-        </div>
-      </section>
-
-      {clusterReport.length ? (
-        <section className="diagnostics card">
-          <h2>Selection Diagnostics</h2>
-          <div className="insights">
-            {diagnosticInsights.map((line, i) => (
-              <p key={`${line}-${i}`}>{line}</p>
-            ))}
-          </div>
-          <div className="cluster-list">
-            {clusterReport.map((cluster) => (
-              <article key={cluster.clusterId} className="cluster-item">
-                <div className="cluster-head">
-                  <strong>Cluster {cluster.clusterId + 1}</strong>
-                  <span>
-                    size: {cluster.size} | selected: {cluster.selectedCount}
-                  </span>
-                </div>
-                <div className="cluster-thumbs">
-                  {cluster.items.map((item) => (
-                    <div key={`${cluster.clusterId}-${item.index}`} className={`cluster-thumb ${item.selected ? "selected" : ""}`}>
-                      {item.previewUrl ? <img src={item.previewUrl} alt={item.name} /> : null}
-                      <small>
-                        {item.score} | vis {item.visibilityScore}
-                        {item.champion ? " | champ" : ""}
-                      </small>
-                    </div>
-                  ))}
-                </div>
-              </article>
-            ))}
-          </div>
+          <section className="log-console card">
+            <h2>Live Analysis Log</h2>
+            <div className="log-body">
+              {logs.length ? logs.map((line, i) => <pre key={`${line}-${i}`}>{line}</pre>) : <pre>No activity yet.</pre>}
+            </div>
+          </section>
         </section>
       ) : null}
 
-      <section className="log-console card">
-        <h2>Live Analysis Log</h2>
-        <div className="log-body">
-          {logs.length ? logs.map((line, i) => <pre key={`${line}-${i}`}>{line}</pre>) : <pre>No activity yet.</pre>}
-        </div>
-      </section>
+      {currentStep === 3 ? (
+        <section className="step-screen results-screen">
+          <div className="step-screen-head card">
+            <div>
+              <small>Step 3</small>
+              <h2>Final Selection</h2>
+            </div>
+            <p>Review the chosen album photos first, then inspect the collapsed clusters underneath if you want to compare near-duplicates.</p>
+          </div>
 
-      <section className="preview">
-        <h2>Preview Grid</h2>
-        <div className="grid">
-          {activePhotos
-            .filter((p) => selectedIds.includes(p.id))
-            .map((photo) => (
-              <article key={photo.id} className="photo-card" onClick={() => setActivePhotoId(photo.id)}>
-                <img src={photo.previewUrl} alt={photo.name} />
-                <button
-                  type="button"
-                  className="remove-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removePhoto(photo.id);
-                  }}
-                >
-                  Remove
-                </button>
-                <div className="card-meta">
-                  <span className="badge">{Math.round(photo.analysis?.adjustedOverall || 0)}</span>
-                  <div className="tags">
-                    {(photo.analysis?.tags || []).slice(0, 4).map((tag) => (
-                      <span key={tag}>{tag}</span>
-                    ))}
-                  </div>
-                </div>
-              </article>
-            ))}
-        </div>
-        {!selectedIds.length && <p>No selected photos yet. Run analysis to build a preview set.</p>}
-      </section>
+          <section className="stats card">
+            <div>
+              <small>Selected</small>
+              <strong>{stats.selected}</strong>
+            </div>
+            <div>
+              <small>Total Uploaded</small>
+              <strong>{stats.uploaded}</strong>
+            </div>
+            <div>
+              <small>Average Score</small>
+              <strong>{stats.avg.toFixed(1)}</strong>
+            </div>
+            <div>
+              <small>Selection Rate</small>
+              <strong>{stats.rate.toFixed(1)}%</strong>
+            </div>
+          </section>
+
+          <section className="preview card">
+            <h2>Preview Grid</h2>
+            <div className="grid">
+              {activePhotos
+                .filter((p) => selectedIds.includes(p.id))
+                .map((photo) => (
+                  <article key={photo.id} className="photo-card" onClick={() => setActivePhotoId(photo.id)}>
+                    <img src={photo.previewUrl} alt={photo.name} />
+                    <button
+                      type="button"
+                      className="remove-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removePhoto(photo.id);
+                      }}
+                    >
+                      Remove
+                    </button>
+                    <div className="card-meta">
+                      <span className="badge">{Math.round(photo.analysis?.adjustedOverall || 0)}</span>
+                      <div className="tags">
+                        {(photo.analysis?.tags || []).slice(0, 4).map((tag) => (
+                          <span key={tag}>{tag}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+            </div>
+            {!selectedIds.length && <p>No selected photos yet. Run analysis to build a preview set.</p>}
+          </section>
+
+          <section className="diagnostics card">
+            <h2>Selection Diagnostics</h2>
+            <div className="insights">
+              {diagnosticInsights.map((line, i) => (
+                <p key={`${line}-${i}`}>{line}</p>
+              ))}
+            </div>
+            <div className="cluster-list">
+              {clusterReport.map((cluster) => {
+                const isOpen = openClusterIds.includes(cluster.clusterId);
+                return (
+                  <article key={cluster.clusterId} className="cluster-item">
+                    <button type="button" className="cluster-toggle" onClick={() => toggleCluster(cluster.clusterId)}>
+                      <div className="cluster-head">
+                        <strong>Cluster {cluster.clusterId + 1}</strong>
+                        <span>
+                          size: {cluster.size} | selected: {cluster.selectedCount} | {isOpen ? "Hide" : "Show"}
+                        </span>
+                      </div>
+                    </button>
+                    {isOpen ? (
+                      <div className="cluster-thumbs">
+                        {cluster.items.map((item) => (
+                          <div key={`${cluster.clusterId}-${item.index}`} className={`cluster-thumb ${item.selected ? "selected" : ""}`}>
+                            {item.previewUrl ? <img src={item.previewUrl} alt={item.name} /> : null}
+                            <small>
+                              {item.score} | vis {item.visibilityScore}
+                              {item.champion ? " | champ" : ""}
+                            </small>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <div className="step-actions">
+            <button type="button" className="secondary-btn" onClick={() => setCurrentStep(2)}>
+              Back To Configure
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {activePhoto?.analysis && (
         <div className="modal-backdrop" onClick={() => setActivePhotoId(null)}>
