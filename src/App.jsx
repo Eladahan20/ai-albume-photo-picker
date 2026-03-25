@@ -9,6 +9,37 @@ const DEFAULT_PROVIDER = (import.meta.env.VITE_AI_PROVIDER || "local").toLowerCa
 const DEFAULT_CF_MODEL = import.meta.env.VITE_CLOUDFLARE_MODEL || "@cf/meta/llama-3.2-11b-vision-instruct";
 const DEFAULT_OPENAI_MODEL = import.meta.env.VITE_OPENAI_MODEL || "gpt-4.1-mini";
 const DEFAULT_OPENAI_BASE_URL = import.meta.env.VITE_OPENAI_BASE_URL || "https://api.openai.com/v1/chat/completions";
+const THEME_PRESETS = {
+  custom: {
+    label: "Custom Prompt",
+    prompt: "",
+    hint: "Write your own theme prompt for the album."
+  },
+  vacation: {
+    label: "Vacation",
+    prompt:
+      "Prioritize a travel album with memorable vacation highlights: scenic landmarks, beach or nature views, authentic local moments, candid people shots, wide establishing scenes, and a balanced mix of hero photos and storytelling details. Favor bright, emotionally engaging, visually clean images that feel like a journey. Penalize screenshots, documents, duplicates, blurry shots, and repetitive near-identical frames.",
+    hint: "Balanced for travel storytelling, scenery, and candid memories."
+  },
+  food: {
+    label: "Food",
+    prompt:
+      "Prioritize a food-focused album featuring appetizing dishes, plated meals, ingredients, cooking moments, restaurant atmosphere, and a few contextual shots that support the dining story. Favor sharp, well-lit, colorful images with clear subjects, attractive composition, and variety across dishes and settings. Penalize blurry shots, cluttered tables, duplicates, screenshots, receipts, and low-interest filler images.",
+    hint: "Focused on dishes, dining atmosphere, and clean food photography."
+  },
+  birthday: {
+    label: "Birthday",
+    prompt:
+      "Prioritize a birthday album that captures the celebration story: key people, cake moments, candles, gifts, decorations, group photos, candid laughter, and emotional interactions. Favor expressive faces, milestone moments, clear composition, and a mix of wide scene-setting shots with close personal moments. Penalize duplicates, screenshots, documents, weak filler frames, and photos where the celebration context is unclear.",
+    hint: "Optimized for party moments, people, and celebration milestones."
+  },
+  newborn_baby: {
+    label: "New Born Baby",
+    prompt:
+      "Prioritize a newborn baby album with gentle, intimate, emotionally warm moments: clear baby portraits, close family interactions, hands and details, feeding or sleeping moments, nursery context, and tender storytelling images. Favor soft but sharp-enough focus, natural skin tones, calm compositions, and emotionally meaningful family connection. Penalize screenshots, documents, duplicates, harsh clutter, and images where the baby is not clearly the emotional focus.",
+    hint: "Designed for intimate newborn portraits and family connection."
+  }
+};
 
 const ACCEPTED_MIME_PREFIX = "image/";
 const HEIC_EXTENSIONS = new Set(["heic", "heif"]);
@@ -815,6 +846,15 @@ function applySmartSelection({
     }
   }
 
+  if (postProcessed.length < targetCount) {
+    const rankedFallback = [...scored].sort((a, b) => b.adjustedBase - a.adjustedBase);
+    for (const candidate of rankedFallback) {
+      if (postProcessed.length >= targetCount) break;
+      if (postProcessed.some((x) => x.index === candidate.index)) continue;
+      postProcessed.push(candidate);
+    }
+  }
+
   const selectedIndexes = postProcessed.slice(0, targetCount).map((s) => s.index);
   const selectedPostSet = new Set(selectedIndexes);
   const finalScored = scored.map((item) => {
@@ -1348,10 +1388,22 @@ function ScoreBar({ label, value }) {
   );
 }
 
+function normalizeSelectedIds(ids) {
+  const seen = new Set();
+  const normalized = [];
+  for (const id of ids) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push(id);
+  }
+  return normalized;
+}
+
 export default function App() {
   const [photos, setPhotos] = useState([]);
   const [albumSize, setAlbumSize] = useState(MIN_ALBUM);
-  const [themePrompt, setThemePrompt] = useState("");
+  const [themePreset, setThemePreset] = useState(() => localStorage.getItem("picker_theme_preset") || "custom");
+  const [customThemePrompt, setCustomThemePrompt] = useState(() => localStorage.getItem("picker_custom_theme_prompt") || "");
   const [isPreparingFiles, setIsPreparingFiles] = useState(false);
   const [filePrepProgress, setFilePrepProgress] = useState(0);
   const [filePrepLabel, setFilePrepLabel] = useState("");
@@ -1437,9 +1489,17 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("picker_max_per_cluster", String(maxPerCluster));
   }, [maxPerCluster]);
+  useEffect(() => {
+    localStorage.setItem("picker_theme_preset", themePreset);
+  }, [themePreset]);
+  useEffect(() => {
+    localStorage.setItem("picker_custom_theme_prompt", customThemePrompt);
+  }, [customThemePrompt]);
 
   const activePhotos = useMemo(() => photos.filter((p) => !p.removed), [photos]);
   const activePhotosById = useMemo(() => new Map(activePhotos.map((photo) => [photo.id, photo])), [activePhotos]);
+  const selectedThemePreset = THEME_PRESETS[themePreset] || THEME_PRESETS.custom;
+  const themePrompt = themePreset === "custom" ? customThemePrompt : selectedThemePreset.prompt;
   const selectedPhotos = useMemo(
     () => selectedIds.map((id) => activePhotosById.get(id)).filter(Boolean),
     [activePhotosById, selectedIds]
@@ -1638,7 +1698,7 @@ export default function App() {
       return;
     }
 
-    setSelectedIds((prev) => prev.map((item) => (item === switchTargetId ? replacementId : item)));
+    setSelectedIds((prev) => normalizeSelectedIds(prev.map((item) => (item === switchTargetId ? replacementId : item))));
     setUsedSwitchPhotoIds((prev) => [...prev, replacementId]);
     appendLog("info", `Switched out one selected photo for ${replacement.name}.`);
     closeSwitchDialog();
@@ -1797,10 +1857,17 @@ export default function App() {
 
       setAnalysisProgressLabel("Optimizing final album selection...");
       const desired = clamp(albumSize, MIN_ALBUM, MAX_ALBUM);
-      const pickedCount = Math.min(desired, merged.length);
+      if (merged.length < desired) {
+        const message = `Only ${merged.length} analyzed photo(s) are available, but the album size is set to ${desired}. Add more usable photos or lower the album size.`;
+        setErrorMessage(message);
+        if (typeof window !== "undefined") {
+          window.alert(message);
+        }
+        throw new Error(message);
+      }
       const { selectedIndexes: topIndexes, scored, stats: selectionStats, diagnostics } = applySmartSelection({
         analyses: merged,
-        targetCount: pickedCount,
+        targetCount: desired,
         fingerprintByIndex,
         themePrompt,
         lookalikeThreshold,
@@ -1808,9 +1875,17 @@ export default function App() {
         themeStrictness,
         maxPerCluster
       });
-      const selected = activePhotos
-        .filter((p, index) => topIndexes.includes(index))
-        .map((p) => p.id);
+      const selectedIndexSet = new Set(topIndexes);
+      const selected = normalizeSelectedIds(activePhotos.filter((p, index) => selectedIndexSet.has(index)).map((p) => p.id));
+
+      if (selected.length !== desired) {
+        const message = `Could only build ${selected.length} selected photo(s) for a requested album size of ${desired}. Try lowering strictness settings or reducing the album size.`;
+        setErrorMessage(message);
+        if (typeof window !== "undefined") {
+          window.alert(message);
+        }
+        throw new Error(message);
+      }
 
       setPhotos((prev) =>
         prev.map((p) => {
@@ -2158,14 +2233,33 @@ export default function App() {
           ) : null}
 
           <label>
-            Theme Prompt (Optional)
-            <textarea
-              rows={3}
-              placeholder="e.g. warm candid family moments, outdoor golden hour"
-              value={themePrompt}
-              onChange={(e) => setThemePrompt(e.target.value)}
-            />
+            Album Theme
+            <select value={themePreset} onChange={(e) => setThemePreset(e.target.value)}>
+              {Object.entries(THEME_PRESETS).map(([value, preset]) => (
+                <option key={value} value={value}>
+                  {preset.label}
+                </option>
+              ))}
+            </select>
+            <small className="control-hint">{selectedThemePreset.hint}</small>
           </label>
+
+          {themePreset === "custom" ? (
+            <label>
+              Custom Theme Prompt (Optional)
+              <textarea
+                rows={4}
+                placeholder="e.g. warm candid family moments, outdoor golden hour"
+                value={customThemePrompt}
+                onChange={(e) => setCustomThemePrompt(e.target.value)}
+              />
+            </label>
+          ) : (
+            <label>
+              Preset Prompt Preview
+              <textarea rows={5} value={selectedThemePreset.prompt} readOnly />
+            </label>
+          )}
 
           <label>
             Lookalike Threshold ({lookalikeThreshold.toFixed(2)})
