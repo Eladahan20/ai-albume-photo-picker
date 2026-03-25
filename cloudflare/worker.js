@@ -37,6 +37,14 @@ function normalizeResultObject(value, indexHint = 0) {
     overall: clampNumber(value?.overall, 0, 100),
     scene: String(value?.scene || "unknown"),
     tags: Array.isArray(value?.tags) ? value.tags.map((tag) => String(tag)).filter(Boolean).slice(0, 6) : [],
+    subject_framing: clampNumber(value?.subject_framing ?? value?.crop_quality ?? 0, 0, 100),
+    subject_completeness: clampNumber(value?.subject_completeness ?? 0, 0, 100),
+    face_visibility: clampNumber(value?.face_visibility ?? 0, 0, 100),
+    crop_quality: clampNumber(value?.crop_quality ?? value?.subject_framing ?? 0, 0, 100),
+    main_subject_clarity: clampNumber(value?.main_subject_clarity ?? 0, 0, 100),
+    moment_strength: clampNumber(value?.moment_strength ?? value?.storytelling ?? 0, 0, 100),
+    background_distraction: clampNumber(value?.background_distraction ?? 0, 0, 100),
+    storytelling: clampNumber(value?.storytelling ?? value?.moment_strength ?? 0, 0, 100),
     descriptor: value?.descriptor && typeof value.descriptor === "object" ? value.descriptor : undefined,
     reason: String(value?.reason || "").trim().slice(0, 240),
     albumWorthy: Boolean(value?.albumWorthy)
@@ -65,6 +73,14 @@ function parseLooseScoredObject(text, indexHint = 0) {
   const emotion = readNumber("emotion");
   const uniqueness = readNumber("uniqueness");
   const overall = readNumber("overall");
+  const subjectFraming = readNumber("subject_framing");
+  const subjectCompleteness = readNumber("subject_completeness");
+  const faceVisibility = readNumber("face_visibility");
+  const cropQuality = readNumber("crop_quality");
+  const mainSubjectClarity = readNumber("main_subject_clarity");
+  const momentStrength = readNumber("moment_strength");
+  const backgroundDistraction = readNumber("background_distraction");
+  const storytelling = readNumber("storytelling");
 
   if ([quality, composition, emotion, uniqueness, overall].some((value) => value === null)) {
     return null;
@@ -88,6 +104,14 @@ function parseLooseScoredObject(text, indexHint = 0) {
       overall,
       scene: readString("scene") || "unknown",
       tags,
+      subject_framing: subjectFraming ?? cropQuality ?? 0,
+      subject_completeness: subjectCompleteness ?? 0,
+      face_visibility: faceVisibility ?? 0,
+      crop_quality: cropQuality ?? subjectFraming ?? 0,
+      main_subject_clarity: mainSubjectClarity ?? 0,
+      moment_strength: momentStrength ?? storytelling ?? 0,
+      background_distraction: backgroundDistraction ?? 0,
+      storytelling: storytelling ?? momentStrength ?? 0,
       reason: readString("reason") || "Recovered from truncated model output.",
       albumWorthy: readBoolean("albumWorthy") ?? overall >= 70
     },
