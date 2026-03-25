@@ -338,6 +338,65 @@ function normalizeDescriptor(input, scene, tags = []) {
   };
 }
 
+function normalizeAnalysisSignals(input, descriptor = {}, tags = []) {
+  const raw = input && typeof input === "object" ? input : {};
+  const joinedTags = tags.map((tag) => String(tag).toLowerCase());
+  const has = (value) => joinedTags.some((tag) => tag.includes(value));
+  const peopleHeavy =
+    Number(descriptor.people_presence || 0) >= 55 ||
+    descriptor.primary_subject === "people" ||
+    descriptor.shot_type === "portrait" ||
+    has("person") ||
+    has("portrait");
+  const documentHeavy =
+    Number(descriptor.document_likelihood || 0) >= 55 ||
+    Number(descriptor.screenshot_likelihood || 0) >= 55 ||
+    Number(descriptor.text_presence || 0) >= 70;
+
+  const subjectFraming = clamp(Number(raw.subject_framing ?? raw.crop_quality ?? (peopleHeavy ? 62 : 70)), 0, 100);
+  const subjectCompleteness = clamp(Number(raw.subject_completeness ?? (peopleHeavy ? 60 : 74)), 0, 100);
+  const faceVisibility = clamp(Number(raw.face_visibility ?? (peopleHeavy ? 58 : 50)), 0, 100);
+  const cropQuality = clamp(Number(raw.crop_quality ?? subjectFraming), 0, 100);
+  const mainSubjectClarity = clamp(
+    Number(raw.main_subject_clarity ?? (documentHeavy ? 28 : peopleHeavy ? 68 : 62)),
+    0,
+    100
+  );
+  const momentStrength = clamp(Number(raw.moment_strength ?? raw.storytelling ?? (peopleHeavy ? 60 : 52)), 0, 100);
+  const backgroundDistraction = clamp(
+    Number(raw.background_distraction ?? (documentHeavy ? 82 : has("clutter") ? 70 : 36)),
+    0,
+    100
+  );
+  const storytelling = clamp(Number(raw.storytelling ?? momentStrength), 0, 100);
+
+  return {
+    subject_framing: subjectFraming,
+    subject_completeness: subjectCompleteness,
+    face_visibility: faceVisibility,
+    crop_quality: cropQuality,
+    main_subject_clarity: mainSubjectClarity,
+    moment_strength: momentStrength,
+    background_distraction: backgroundDistraction,
+    storytelling
+  };
+}
+
+function deriveSelectionFlags(analysis, themeProfile) {
+  const flags = [];
+  if ((analysis.moment_strength || 0) >= 74) flags.push("Strong moment");
+  if ((analysis.storytelling || 0) >= 74) flags.push("Storytelling");
+  if ((analysis.crop_quality || 0) >= 78) flags.push("Clean framing");
+  if ((analysis.main_subject_clarity || 0) >= 74) flags.push("Clear subject");
+  if ((analysis.face_visibility || 0) < 45 && (analysis.descriptor?.people_presence || 0) >= 55) flags.push("Face cutoff risk");
+  if ((analysis.subject_completeness || 0) < 45 && (analysis.descriptor?.people_presence || 0) >= 55) flags.push("Partial subject");
+  if ((analysis.crop_quality || 0) < 45) flags.push("Awkward crop");
+  if ((analysis.moment_strength || 0) < 42) flags.push("Low moment");
+  if ((analysis.background_distraction || 0) >= 70) flags.push("Busy background");
+  if (themeProfile.peopleFocused && (analysis.descriptor?.people_presence || 0) >= 55) flags.push("People-theme match");
+  return Array.from(new Set(flags)).slice(0, 4);
+}
+
 function hammingDistance(a, b) {
   if (!a || !b || a.length !== b.length) return Number.MAX_SAFE_INTEGER;
   let diff = 0;
@@ -582,6 +641,11 @@ function computeThemeSignals(analysis, themeProfile, themeStrictness = 2) {
       descriptor.people_presence >= 55 || descriptor.primary_subject === "people" || descriptor.shot_type === "portrait";
     const hasOffThemeSignal =
       descriptor.screenshot_likelihood >= 55 || descriptor.document_likelihood >= 55 || descriptor.text_presence >= 75;
+    const cropRisk =
+      Number(analysis.crop_quality || 0) < 48 ||
+      Number(analysis.subject_completeness || 0) < 48 ||
+      Number(analysis.face_visibility || 0) < 42;
+    const weakMoment = Number(analysis.moment_strength || 0) < 42 || Number(analysis.storytelling || 0) < 42;
 
     if (hasPersonSignal) {
       themeBonus += 16 * strictScale;
@@ -591,6 +655,13 @@ function computeThemeSignals(analysis, themeProfile, themeStrictness = 2) {
     if (hasOffThemeSignal) {
       themePenalty += 48 * strictScale;
       themeBlocked = strictScale >= 1;
+    }
+    if (cropRisk) {
+      themePenalty += 32 * strictScale;
+      themeBlocked = strictScale >= 1.2;
+    }
+    if (weakMoment) {
+      themePenalty += 18 * strictScale;
     }
   }
 
@@ -626,19 +697,40 @@ function applySmartSelection({
     const key = (item.scene || "unknown").trim().toLowerCase();
     const scenePenalty = Math.max(0, (sceneCounts[key] || 1) - 1) * 4;
     const theme = computeThemeSignals(item, themeProfile, themeStrictness);
+    const peopleShot =
+      Number(item.descriptor?.people_presence || 0) >= 55 ||
+      item.descriptor?.primary_subject === "people" ||
+      item.descriptor?.shot_type === "portrait";
     const baseRelevance =
-      item.overall * 0.54 +
-      item.quality * 0.16 +
-      item.composition * 0.12 +
+      item.overall * 0.34 +
+      item.quality * 0.14 +
+      item.composition * 0.1 +
       item.emotion * 0.08 +
-      item.uniqueness * 0.1 +
-      (item.albumWorthy ? 5 : 0);
+      item.uniqueness * 0.08 +
+      item.moment_strength * 0.11 +
+      item.storytelling * 0.07 +
+      item.main_subject_clarity * 0.08 +
+        (item.albumWorthy ? 5 : 0);
 
     const fp = fingerprintByIndex.get(item.index);
     const metadataPenalty = fp?.format?.includes("gif") ? 6 : 0;
     const metadataBonus = fp && fp.width >= fp.height ? 2 : 0;
     const visibilityPenalty = fp ? Math.max(0, 28 - Number(fp.visibilityScore || 0)) * 0.8 : 0;
     const visibilityBonus = fp ? Math.max(0, Number(fp.visibilityScore || 0) - 48) * 0.12 : 0;
+    const cropPenalty = peopleShot
+      ? Math.max(0, 60 - Number(item.crop_quality || 0)) * 0.55 +
+        Math.max(0, 58 - Number(item.subject_completeness || 0)) * 0.6 +
+        Math.max(0, 52 - Number(item.face_visibility || 0)) * 0.45
+      : Math.max(0, 44 - Number(item.crop_quality || 0)) * 0.22;
+    const interestPenalty =
+      Math.max(0, 50 - Number(item.moment_strength || 0)) * 0.4 +
+      Math.max(0, 50 - Number(item.storytelling || 0)) * 0.35 +
+      Math.max(0, 50 - Number(item.main_subject_clarity || 0)) * 0.36;
+    const distractionPenalty = Math.max(0, Number(item.background_distraction || 0) - 55) * 0.42;
+    const framingBonus =
+      Math.max(0, Number(item.crop_quality || 0) - 74) * 0.22 +
+      Math.max(0, Number(item.subject_completeness || 0) - 72) * 0.18 +
+      Math.max(0, Number(item.main_subject_clarity || 0) - 70) * 0.18;
     return {
       ...item,
       candidateIdx: position,
@@ -650,6 +742,10 @@ function applySmartSelection({
       metadataBonus,
       visibilityPenalty,
       visibilityBonus,
+      cropPenalty,
+      interestPenalty,
+      distractionPenalty,
+      framingBonus,
       baseRelevance,
       adjustedBase:
         baseRelevance -
@@ -658,6 +754,10 @@ function applySmartSelection({
         metadataBonus -
         visibilityPenalty +
         visibilityBonus +
+        framingBonus -
+        cropPenalty -
+        interestPenalty -
+        distractionPenalty +
         theme.themeBonus -
         theme.themePenalty,
       ...theme
@@ -872,12 +972,41 @@ function applySmartSelection({
   const postProcessSimilarityThreshold = hardDedupeThreshold;
   const hardMinVisibility = 22;
   let lowVisibilityFiltered = 0;
+  let weakFramingFiltered = 0;
+  let lowMomentFiltered = 0;
+  const failsQualityGate = (candidate) => {
+    const peopleShot =
+      Number(candidate.descriptor?.people_presence || 0) >= 55 ||
+      candidate.descriptor?.primary_subject === "people" ||
+      candidate.descriptor?.shot_type === "portrait";
+
+    if (peopleShot) {
+      if (
+        Number(candidate.crop_quality || 0) < 38 ||
+        Number(candidate.subject_completeness || 0) < 40 ||
+        Number(candidate.face_visibility || 0) < 34
+      ) {
+        weakFramingFiltered += 1;
+        return true;
+      }
+    }
+
+    if (themeProfile.peopleFocused && peopleShot) {
+      if (Number(candidate.moment_strength || 0) < 35 || Number(candidate.storytelling || 0) < 35) {
+        lowMomentFiltered += 1;
+        return true;
+      }
+    }
+
+    return false;
+  };
   for (const candidate of sortedSelected) {
     const fpCandidate = fingerprintByIndex.get(candidate.index);
     if (fpCandidate && fpCandidate.visibilityScore < hardMinVisibility) {
       lowVisibilityFiltered += 1;
       continue;
     }
+    if (failsQualityGate(candidate)) continue;
     const tooSimilar = postProcessed.some(
       (kept) => simMatrix[candidate.candidateIdx][kept.candidateIdx] >= postProcessSimilarityThreshold
     );
@@ -896,6 +1025,7 @@ function applySmartSelection({
         lowVisibilityFiltered += 1;
         continue;
       }
+      if (failsQualityGate(candidate)) continue;
       const tooSimilar = postProcessed.some(
         (kept) => simMatrix[candidate.candidateIdx][kept.candidateIdx] >= postProcessSimilarityThreshold
       );
@@ -922,9 +1052,11 @@ function applySmartSelection({
     const clusterPenalty =
       meta?.intraClusterRank > 0 ? meta.intraClusterRank * (5 + strictScale * 2) + (meta.clusterSize || 1) * 1.2 : 0;
     const adjustedOverall = clamp(Math.round(item.adjustedBase - clusterPenalty - (isPicked ? 0 : 4)), 0, 100);
+    const selectionFlags = deriveSelectionFlags(item, themeProfile);
     return {
       ...item,
       adjustedOverall,
+      selectionFlags,
       mmrSelected: isPicked,
       clusterId: meta.clusterId,
       clusterSize: meta.clusterSize || 1,
@@ -943,6 +1075,15 @@ function applySmartSelection({
   const clustersWithMultiSelected = Object.values(clusterSelectedCounts).filter((count) => count > 1).length;
   const selectedLowVisibility = selectedRows.filter((row) => (row.visibilityScore || 0) < 30).length;
   const selectedNonChampion = selectedRows.filter((row) => !row.clusterChampion).length;
+  const selectedWeakFraming = selectedRows.filter(
+    (row) =>
+      Number(row.crop_quality || 0) < 50 ||
+      Number(row.subject_completeness || 0) < 50 ||
+      (Number(row.descriptor?.people_presence || 0) >= 55 && Number(row.face_visibility || 0) < 45)
+  ).length;
+  const selectedLowMoment = selectedRows.filter(
+    (row) => Number(row.moment_strength || 0) < 45 || Number(row.storytelling || 0) < 45
+  ).length;
 
   const clusterSummaries = clusters
     .map((cluster) => {
@@ -967,7 +1108,11 @@ function applySmartSelection({
       postProcessRemoved: Math.max(0, selected.length - selectedIndexes.length),
       postProcessThreshold: postProcessSimilarityThreshold,
       lowVisibilityFiltered,
+      weakFramingFiltered,
+      lowMomentFiltered,
       selectedLowVisibility,
+      selectedWeakFraming,
+      selectedLowMoment,
       selectedNonChampion,
       clustersWithMultiSelected,
       maxPerCluster: maxClusterPicks
@@ -985,11 +1130,15 @@ function buildPrompt(theme) {
 
   return [
     "Analyze each image and return only a raw JSON array (no markdown, no commentary, no explanations).",
-    "Return one compact object per image with fields: index, quality, composition, emotion, uniqueness, overall, scene, tags, descriptor, reason, albumWorthy.",
+    "Return one compact object per image with fields: index, quality, composition, emotion, uniqueness, overall, scene, tags, descriptor, subject_framing, subject_completeness, face_visibility, crop_quality, main_subject_clarity, moment_strength, background_distraction, storytelling, reason, albumWorthy.",
     "descriptor must be key:value only with keys: primary_subject, setting, shot_type, event_role, color_profile, people_presence, text_presence, screenshot_likelihood, document_likelihood.",
     "Scoring is 0-100 for quality, composition, emotion, uniqueness, and overall.",
+    "Also score subject_framing, subject_completeness, face_visibility, crop_quality, main_subject_clarity, moment_strength, background_distraction, and storytelling from 0-100.",
     "Use theme relevance strongly in scoring. Off-theme images should score lower.",
     "If the theme is people/family/portraits, penalize documents, screenshots, and text-heavy images.",
+    "If people are present, strongly penalize chopped heads, missing faces, cropped limbs, partial group members, awkward edge crops, and unclear main subjects.",
+    "Prefer photos with complete visible subjects, clear faces, strong expressions, emotional moments, and memorable storytelling value.",
+    "Penalize boring filler shots, flat moments, weak expressions, cluttered backgrounds, and uninteresting compositions even if they are technically sharp.",
     "tags must be an array of 3 to 6 short tags only. Do not exceed 6 tags.",
     "reason must be a single short sentence under 18 words.",
     "Do not include any extra keys, extra prose, long lists, or nested commentary.",
@@ -1405,6 +1554,49 @@ function makeTags(metrics, scene, themePrompt) {
   return Array.from(new Set(tags)).slice(0, 6);
 }
 
+function estimateLocalSignals(metrics, scene, tags) {
+  const personLike = tags.includes("person-like");
+  const subjectFraming = clamp(
+    Math.round(52 + (scene === "portrait" ? 10 : 0) + metrics.sharpness * 0.5 + (personLike ? 6 : 0)),
+    0,
+    100
+  );
+  const subjectCompleteness = clamp(
+    Math.round(56 + (scene === "portrait" ? 8 : 0) - Math.max(0, Math.abs(metrics.width / Math.max(1, metrics.height) - 1.1) * 18)),
+    0,
+    100
+  );
+  const faceVisibility = clamp(Math.round(personLike ? 60 + metrics.sharpness * 0.35 : 48), 0, 100);
+  const cropQuality = clamp(Math.round(subjectFraming - Math.max(0, 18 - metrics.contrast * 0.18)), 0, 100);
+  const mainSubjectClarity = clamp(Math.round(48 + metrics.contrast * 0.45 + metrics.sharpness * 0.6), 0, 100);
+  const momentStrength = clamp(
+    Math.round(42 + metrics.saturation * 0.35 + metrics.warmth * 18 + (personLike ? 10 : 0)),
+    0,
+    100
+  );
+  const backgroundDistraction = clamp(
+    Math.round(38 + Math.max(0, metrics.sharpness - 16) * 0.9 - Math.max(0, metrics.contrast - 36) * 0.25),
+    0,
+    100
+  );
+  const storytelling = clamp(
+    Math.round(momentStrength * 0.6 + mainSubjectClarity * 0.25 + (scene === "landscape" || scene === "outdoor" ? 8 : 0)),
+    0,
+    100
+  );
+
+  return {
+    subject_framing: subjectFraming,
+    subject_completeness: subjectCompleteness,
+    face_visibility: faceVisibility,
+    crop_quality: cropQuality,
+    main_subject_clarity: mainSubjectClarity,
+    moment_strength: momentStrength,
+    background_distraction: backgroundDistraction,
+    storytelling
+  };
+}
+
 async function runLocalBatch({ photos, themePrompt, appendLog, signal }) {
   const out = [];
 
@@ -1437,6 +1629,7 @@ async function runLocalBatch({ photos, themePrompt, appendLog, signal }) {
       scene,
       tags
     );
+    const signals = estimateLocalSignals(metrics, scene, tags);
     const reason = `Local estimate: ${scene} scene, contrast ${metrics.contrast.toFixed(1)}, sharpness ${metrics.sharpness.toFixed(1)}, saturation ${metrics.saturation.toFixed(1)}.`;
 
     out.push({
@@ -1449,6 +1642,7 @@ async function runLocalBatch({ photos, themePrompt, appendLog, signal }) {
       scene,
       tags,
       descriptor,
+      ...signals,
       reason,
       albumWorthy: overall >= 70
     });
@@ -1914,6 +2108,8 @@ export default function App() {
             throw new Error(`Batch ${i + 1} returned more results than images sent.`);
           }
           const mappedIndex = byId.get(batchPhoto.id);
+          const descriptor = normalizeDescriptor(item.descriptor, item.scene, item.tags);
+          const signals = normalizeAnalysisSignals(item, descriptor, item.tags);
 
           return {
             index: mappedIndex,
@@ -1925,7 +2121,8 @@ export default function App() {
             overall: clamp(Number(item.overall || 0), 0, 100),
             scene: String(item.scene || "unknown"),
             tags: Array.isArray(item.tags) ? item.tags.map((t) => String(t)) : [],
-            descriptor: normalizeDescriptor(item.descriptor, item.scene, item.tags),
+            descriptor,
+            ...signals,
             reason: String(item.reason || "No reason provided."),
             albumWorthy: Boolean(item.albumWorthy)
           };
@@ -2029,6 +2226,12 @@ export default function App() {
       if ((selectionStats?.selectedLowVisibility || 0) > 0) {
         insights.push(`${selectionStats.selectedLowVisibility} selected photo(s) have low visibility and may be weak picks.`);
       }
+      if ((selectionStats?.selectedWeakFraming || 0) > 0) {
+        insights.push(`${selectionStats.selectedWeakFraming} selected photo(s) still have weak framing or incomplete subjects.`);
+      }
+      if ((selectionStats?.selectedLowMoment || 0) > 0) {
+        insights.push(`${selectionStats.selectedLowMoment} selected photo(s) still have low storytelling or moment strength.`);
+      }
       if ((selectionStats?.selectedNonChampion || 0) > 0) {
         insights.push(`${selectionStats.selectedNonChampion} selected photo(s) are non-champions from their clusters.`);
       }
@@ -2039,7 +2242,7 @@ export default function App() {
 
       appendLog(
         "info",
-        `Uniqueness stats: clusters=${selectionStats?.clusters || 0}, duplicate-suppressed=${selectionStats?.duplicateSuppressed || 0}, post-process-removed=${selectionStats?.postProcessRemoved || 0}, low-visibility-filtered=${selectionStats?.lowVisibilityFiltered || 0}, theme-blocked=${selectionStats?.blockedByTheme || 0}, max-per-cluster=${selectionStats?.maxPerCluster || maxPerCluster}, lookalike-threshold=${(selectionStats?.lookalikeThreshold || lookalikeThreshold).toFixed(2)}, post-threshold=${(selectionStats?.postProcessThreshold || lookalikeThreshold).toFixed(2)}.`
+        `Uniqueness stats: clusters=${selectionStats?.clusters || 0}, duplicate-suppressed=${selectionStats?.duplicateSuppressed || 0}, post-process-removed=${selectionStats?.postProcessRemoved || 0}, low-visibility-filtered=${selectionStats?.lowVisibilityFiltered || 0}, weak-framing-filtered=${selectionStats?.weakFramingFiltered || 0}, low-moment-filtered=${selectionStats?.lowMomentFiltered || 0}, theme-blocked=${selectionStats?.blockedByTheme || 0}, max-per-cluster=${selectionStats?.maxPerCluster || maxPerCluster}, lookalike-threshold=${(selectionStats?.lookalikeThreshold || lookalikeThreshold).toFixed(2)}, post-threshold=${(selectionStats?.postProcessThreshold || lookalikeThreshold).toFixed(2)}.`
       );
       appendLog("success", `Selected ${selected.length} photos after relevance + metadata + uniqueness MMR pass.`);
       setAnalysisProgress(100);
@@ -2476,7 +2679,7 @@ export default function App() {
                     <div className="card-meta">
                       <span className="badge">{Math.round(photo.analysis?.adjustedOverall || 0)}</span>
                       <div className="tags">
-                        {(photo.analysis?.tags || []).slice(0, 4).map((tag) => (
+                        {[...(photo.analysis?.selectionFlags || []), ...(photo.analysis?.tags || [])].slice(0, 4).map((tag) => (
                           <span key={tag}>{tag}</span>
                         ))}
                       </div>
@@ -2548,9 +2751,18 @@ export default function App() {
               <ScoreBar label="Composition" value={activePhoto.analysis.composition} />
               <ScoreBar label="Emotion" value={activePhoto.analysis.emotion} />
               <ScoreBar label="Uniqueness" value={activePhoto.analysis.uniqueness} />
+              <ScoreBar label="Moment" value={activePhoto.analysis.moment_strength} />
+              <ScoreBar label="Story" value={activePhoto.analysis.storytelling} />
+              <ScoreBar label="Crop" value={activePhoto.analysis.crop_quality} />
+              <ScoreBar label="Subject" value={activePhoto.analysis.main_subject_clarity} />
               <ScoreBar label="Overall" value={activePhoto.analysis.overall} />
               <ScoreBar label="Adjusted" value={activePhoto.analysis.adjustedOverall} />
             </div>
+            {activePhoto.analysis.selectionFlags?.length ? (
+              <p>
+                Flags: {activePhoto.analysis.selectionFlags.join(", ")}
+              </p>
+            ) : null}
           </div>
         </div>
       )}
