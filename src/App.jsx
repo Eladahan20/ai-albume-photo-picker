@@ -99,6 +99,65 @@ function throwIfAborted(signal) {
   }
 }
 
+function wait(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      cleanup();
+      reject(new DOMException("Operation aborted", "AbortError"));
+    };
+
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    if (signal) {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+}
+
+function isRetryableStatus(status) {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+async function fetchWithRetry(url, options, { label, appendLog, signal, retries = 2, retryDelayMs = 1200 } = {}) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    throwIfAborted(signal);
+
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok && isRetryableStatus(response.status) && attempt < retries) {
+        appendLog?.(
+          "info",
+          `${label} retry ${attempt + 1}/${retries} after upstream status ${response.status}.`
+        );
+        await wait(retryDelayMs * (attempt + 1), signal);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      lastError = error;
+      if (attempt >= retries) break;
+      appendLog?.(
+        "info",
+        `${label} retry ${attempt + 1}/${retries} after network failure: ${errorToMessage(error)}.`
+      );
+      await wait(retryDelayMs * (attempt + 1), signal);
+    }
+  }
+
+  throw lastError || new Error(`${label} failed after ${retries + 1} attempts.`);
+}
+
 function fileExtension(name = "") {
   const parts = name.toLowerCase().split(".");
   return parts.length > 1 ? parts.pop() : "";
@@ -971,21 +1030,31 @@ async function runCloudflareBatch({ photos, themePrompt, appendLog, endpoint, pr
 
   let response;
   try {
-    response = await fetch(resolvedEndpoint, {
-      method: "POST",
-      headers,
-      signal,
-      body: JSON.stringify({
-        provider: "cloudflare",
-        model: model?.trim() || DEFAULT_CF_MODEL,
-        messages: [
-          {
-            role: "user",
-            content
-          }
-        ]
-      })
-    });
+    response = await fetchWithRetry(
+      resolvedEndpoint,
+      {
+        method: "POST",
+        headers,
+        signal,
+        body: JSON.stringify({
+          provider: "cloudflare",
+          model: model?.trim() || DEFAULT_CF_MODEL,
+          messages: [
+            {
+              role: "user",
+              content
+            }
+          ]
+        })
+      },
+      {
+        label: "Cloudflare proxy request",
+        appendLog,
+        signal,
+        retries: 2,
+        retryDelayMs: 1500
+      }
+    );
   } catch (error) {
     throw new Error(
       `Proxy request failed (${errorToMessage(error)}). Check endpoint URL and CORS on your Worker (Access-Control-Allow-Origin).`
@@ -1047,21 +1116,31 @@ async function runOpenAIProxyBatch({ photos, themePrompt, appendLog, endpoint, p
 
   let response;
   try {
-    response = await fetch(resolvedEndpoint, {
-      method: "POST",
-      headers,
-      signal,
-      body: JSON.stringify({
-        provider: "openai",
-        model: model?.trim() || DEFAULT_OPENAI_MODEL,
-        messages: [
-          {
-            role: "user",
-            content
-          }
-        ]
-      })
-    });
+    response = await fetchWithRetry(
+      resolvedEndpoint,
+      {
+        method: "POST",
+        headers,
+        signal,
+        body: JSON.stringify({
+          provider: "openai",
+          model: model?.trim() || DEFAULT_OPENAI_MODEL,
+          messages: [
+            {
+              role: "user",
+              content
+            }
+          ]
+        })
+      },
+      {
+        label: "OpenAI proxy request",
+        appendLog,
+        signal,
+        retries: 2,
+        retryDelayMs: 1500
+      }
+    );
   } catch (error) {
     throw new Error(
       `OpenAI proxy request failed (${errorToMessage(error)}). Check endpoint URL and CORS on your Worker (Access-Control-Allow-Origin).`

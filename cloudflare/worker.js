@@ -2,7 +2,8 @@ function createCorsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept, Origin",
+    "Access-Control-Max-Age": "86400"
   };
 }
 
@@ -357,6 +358,20 @@ export default {
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
+    if (request.method === "GET") {
+      return jsonResponse(
+        {
+          ok: true,
+          service: "ai-album-selector-proxy",
+          providerSupport: ["cloudflare", "openai"],
+          hasCloudflareConfig: Boolean(env.CF_ACCOUNT_ID && env.CF_API_TOKEN),
+          hasOpenAIConfig: Boolean(env.OPENAI_API_KEY)
+        },
+        200,
+        corsHeaders
+      );
     }
 
     if (request.method !== "POST") {
