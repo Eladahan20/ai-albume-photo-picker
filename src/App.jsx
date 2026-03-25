@@ -984,13 +984,16 @@ function buildPrompt(theme) {
     : "No specific album theme was provided.";
 
   return [
-    "Analyze each image and return only a raw JSON array (no markdown, no commentary).",
-    "Return one object per image with fields: index, quality, composition, emotion, uniqueness, overall, scene, tags, descriptor, reason, albumWorthy.",
+    "Analyze each image and return only a raw JSON array (no markdown, no commentary, no explanations).",
+    "Return one compact object per image with fields: index, quality, composition, emotion, uniqueness, overall, scene, tags, descriptor, reason, albumWorthy.",
     "descriptor must be key:value only with keys: primary_subject, setting, shot_type, event_role, color_profile, people_presence, text_presence, screenshot_likelihood, document_likelihood.",
     "Scoring is 0-100 for quality, composition, emotion, uniqueness, and overall.",
     "Use theme relevance strongly in scoring. Off-theme images should score lower.",
     "If the theme is people/family/portraits, penalize documents, screenshots, and text-heavy images.",
-    "tags must be an array of short strings.",
+    "tags must be an array of 3 to 6 short tags only. Do not exceed 6 tags.",
+    "reason must be a single short sentence under 18 words.",
+    "Do not include any extra keys, extra prose, long lists, or nested commentary.",
+    "Do not repeat synonyms or generate long tag lists.",
     "albumWorthy must be boolean.",
     themeLine
   ].join(" ");

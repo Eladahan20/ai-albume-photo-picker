@@ -17,18 +17,102 @@ function extractFirstJsonArray(text) {
   }
 }
 
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, Number(value || 0)));
+}
+
+function isResultObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const numericFields = ["quality", "composition", "emotion", "uniqueness", "overall"];
+  return numericFields.every((field) => Number.isFinite(Number(value[field])));
+}
+
+function normalizeResultObject(value, indexHint = 0) {
+  return {
+    index: Number.isFinite(Number(value?.index)) ? Number(value.index) : indexHint,
+    quality: clampNumber(value?.quality, 0, 100),
+    composition: clampNumber(value?.composition, 0, 100),
+    emotion: clampNumber(value?.emotion, 0, 100),
+    uniqueness: clampNumber(value?.uniqueness, 0, 100),
+    overall: clampNumber(value?.overall, 0, 100),
+    scene: String(value?.scene || "unknown"),
+    tags: Array.isArray(value?.tags) ? value.tags.map((tag) => String(tag)).filter(Boolean).slice(0, 6) : [],
+    descriptor: value?.descriptor && typeof value.descriptor === "object" ? value.descriptor : undefined,
+    reason: String(value?.reason || "").trim().slice(0, 240),
+    albumWorthy: Boolean(value?.albumWorthy)
+  };
+}
+
+function parseLooseScoredObject(text, indexHint = 0) {
+  const source = String(text || "");
+  if (!source.trim()) return null;
+
+  const readNumber = (field) => {
+    const match = source.match(new RegExp(`"${field}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`, "i"));
+    return match ? clampNumber(match[1], 0, 100) : null;
+  };
+  const readString = (field) => {
+    const match = source.match(new RegExp(`"${field}"\\s*:\\s*"([^"]*)`, "i"));
+    return match ? match[1].trim() : "";
+  };
+  const readBoolean = (field) => {
+    const match = source.match(new RegExp(`"${field}"\\s*:\\s*(true|false)`, "i"));
+    return match ? match[1].toLowerCase() === "true" : null;
+  };
+
+  const quality = readNumber("quality");
+  const composition = readNumber("composition");
+  const emotion = readNumber("emotion");
+  const uniqueness = readNumber("uniqueness");
+  const overall = readNumber("overall");
+
+  if ([quality, composition, emotion, uniqueness, overall].some((value) => value === null)) {
+    return null;
+  }
+
+  const tagsBlockMatch = source.match(/"tags"\s*:\s*\[([^\]]*)/i);
+  const tags = tagsBlockMatch
+    ? Array.from(tagsBlockMatch[1].matchAll(/"([^"]+)"/g))
+        .map((match) => match[1].trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
+
+  return normalizeResultObject(
+    {
+      index: readNumber("index") ?? indexHint,
+      quality,
+      composition,
+      emotion,
+      uniqueness,
+      overall,
+      scene: readString("scene") || "unknown",
+      tags,
+      reason: readString("reason") || "Recovered from truncated model output.",
+      albumWorthy: readBoolean("albumWorthy") ?? overall >= 70
+    },
+    indexHint
+  );
+}
+
 function extractJsonResults(text) {
   const array = extractFirstJsonArray(text);
-  if (Array.isArray(array)) return array;
+  if (Array.isArray(array)) {
+    const normalized = array
+      .map((item, index) => (isResultObject(item) ? normalizeResultObject(item, index) : null))
+      .filter(Boolean);
+    if (normalized.length) return normalized;
+  }
 
   const source = String(text || "");
   const objectMatch = source.match(/\{[\s\S]*\}/);
   if (!objectMatch) return null;
   try {
     const parsed = JSON.parse(objectMatch[0]);
-    return parsed && typeof parsed === "object" ? [parsed] : null;
+    return isResultObject(parsed) ? [normalizeResultObject(parsed, 0)] : null;
   } catch {
-    return null;
+    const loose = parseLooseScoredObject(source, 0);
+    return loose ? [loose] : null;
   }
 }
 
