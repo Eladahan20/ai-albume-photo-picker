@@ -55,7 +55,7 @@ footer {
   max-width: 760px;
 }
 
-.progress {
+.step-progress {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
@@ -530,7 +530,7 @@ footer {
 }
 
 @media (max-width: 920px) {
-  .progress,
+  .step-progress,
   .stats {
     grid-template-columns: 1fr;
   }

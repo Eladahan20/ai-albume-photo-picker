@@ -1910,7 +1910,7 @@ export default function App() {
         <p>Pick your strongest album photos with AI scoring and diversity-aware ranking.</p>
       </header>
 
-      <section className="progress">
+      <section className="step-progress">
         {["Upload", "Configure", "Results"].map((label, idx) => {
           const stepNumber = idx + 1;
           const isCompleted =
