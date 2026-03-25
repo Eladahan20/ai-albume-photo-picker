@@ -2029,83 +2029,15 @@ export default function App() {
         setAnalysisProgress(clamp(pct, 0, 100));
         setAnalysisProgressLabel(label);
       };
-
-      appendLog("info", "Computing image fingerprints (hash/color/metadata) for uniqueness model...");
-      setAnalysisProgressLabel("Computing fingerprints...");
-      for (let i = 0; i < activePhotos.length; i += 1) {
-        throwIfAborted(abortController.signal);
-        try {
-          const fingerprint = await buildImageFingerprint(activePhotos[i].file);
-          fingerprintByIndex.set(i, fingerprint);
-        } catch (error) {
-          if (isAbortError(error)) throw error;
-          appendLog("error", `Fingerprint compute failed for ${activePhotos[i].name}: ${errorToMessage(error)}`);
-        }
-        updateProgress(`Computing fingerprints (${i + 1}/${activePhotos.length})`, 1);
-      }
-      appendLog("info", `Computed fingerprints: ${fingerprintByIndex.size}/${activePhotos.length}.`);
-
-      for (let i = 0; i < batches.length; i += 1) {
-        throwIfAborted(abortController.signal);
-        const batch = batches[i];
-        appendLog("info", `Analyzing batch ${i + 1}/${batches.length}...`);
-
-        const results =
-          provider === "cloudflare"
-            ? await runCloudflareBatch({
-                photos: batch,
-                themePrompt,
-                appendLog,
-                endpoint: cfProxyEndpoint?.trim() || CLOUDFLARE_ENDPOINT,
-                proxyToken: cfProxyToken,
-                model: cfProxyModel,
-                signal: abortController.signal
-              })
-            : provider === "openai"
-              ? await runOpenAIProxyBatch({
-                  photos: batch,
-                  themePrompt,
-                  appendLog,
-                  endpoint: cfProxyEndpoint?.trim() || CLOUDFLARE_ENDPOINT,
-                  proxyToken: cfProxyToken,
-                  model: openaiModel,
-                  signal: abortController.signal
-                })
-            : provider === "cloudflare-direct"
-              ? await runCloudflareDirectBatch({
-                  photos: batch,
-                  themePrompt,
-                  appendLog,
-                  accountId: cfAccountId,
-                  apiKey: cfApiKey,
-                  model: cfModel,
-                  signal: abortController.signal
-                })
-              : provider === "openai-direct"
-                ? await runOpenAIDirectBatch({
-                    photos: batch,
-                    themePrompt,
-                    appendLog,
-                    apiKey: openaiApiKey,
-                    model: openaiModel,
-                    baseUrl: openaiBaseUrl,
-                    signal: abortController.signal
-                  })
-            : await runLocalBatch({
-                photos: batch,
-                themePrompt,
-                appendLog,
-                signal: abortController.signal
-              });
-
+      const normalizeBatchResults = (results, batch, batchNumber) => {
         if (!Array.isArray(results)) {
-          throw new Error(`Batch ${i + 1} returned invalid payload: expected JSON array.`);
+          throw new Error(`Batch ${batchNumber} returned invalid payload: expected JSON array.`);
         }
 
-        const normalized = results.map((item, idx) => {
+        return results.map((item, idx) => {
           const batchPhoto = batch[idx];
           if (!batchPhoto) {
-            throw new Error(`Batch ${i + 1} returned more results than images sent.`);
+            throw new Error(`Batch ${batchNumber} returned more results than images sent.`);
           }
           const mappedIndex = byId.get(batchPhoto.id);
           const descriptor = normalizeDescriptor(item.descriptor, item.scene, item.tags);
@@ -2127,11 +2059,121 @@ export default function App() {
             albumWorthy: Boolean(item.albumWorthy)
           };
         });
+      };
+      const runBatchForProvider = async (batch) =>
+        provider === "cloudflare"
+          ? runCloudflareBatch({
+              photos: batch,
+              themePrompt,
+              appendLog,
+              endpoint: cfProxyEndpoint?.trim() || CLOUDFLARE_ENDPOINT,
+              proxyToken: cfProxyToken,
+              model: cfProxyModel,
+              signal: abortController.signal
+            })
+          : provider === "openai"
+            ? runOpenAIProxyBatch({
+                photos: batch,
+                themePrompt,
+                appendLog,
+                endpoint: cfProxyEndpoint?.trim() || CLOUDFLARE_ENDPOINT,
+                proxyToken: cfProxyToken,
+                model: openaiModel,
+                signal: abortController.signal
+              })
+            : provider === "cloudflare-direct"
+              ? runCloudflareDirectBatch({
+                  photos: batch,
+                  themePrompt,
+                  appendLog,
+                  accountId: cfAccountId,
+                  apiKey: cfApiKey,
+                  model: cfModel,
+                  signal: abortController.signal
+                })
+              : provider === "openai-direct"
+                ? runOpenAIDirectBatch({
+                    photos: batch,
+                    themePrompt,
+                    appendLog,
+                    apiKey: openaiApiKey,
+                    model: openaiModel,
+                    baseUrl: openaiBaseUrl,
+                    signal: abortController.signal
+                  })
+                : runLocalBatch({
+                    photos: batch,
+                    themePrompt,
+                    appendLog,
+                    signal: abortController.signal
+                  });
+      const canFallbackToLocal = provider !== "local";
+      const failedBatches = [];
 
-        merged.push(...normalized);
-        appendLog("info", `Batch ${i + 1} raw parsed result: ${JSON.stringify(normalized)}`);
-        appendLog("info", `Batch ${i + 1} completed.`);
-        updateProgress(`Analyzing images (${merged.length}/${activePhotos.length})`, batch.length);
+      appendLog("info", "Computing image fingerprints (hash/color/metadata) for uniqueness model...");
+      setAnalysisProgressLabel("Computing fingerprints...");
+      for (let i = 0; i < activePhotos.length; i += 1) {
+        throwIfAborted(abortController.signal);
+        try {
+          const fingerprint = await buildImageFingerprint(activePhotos[i].file);
+          fingerprintByIndex.set(i, fingerprint);
+        } catch (error) {
+          if (isAbortError(error)) throw error;
+          appendLog("error", `Fingerprint compute failed for ${activePhotos[i].name}: ${errorToMessage(error)}`);
+        }
+        updateProgress(`Computing fingerprints (${i + 1}/${activePhotos.length})`, 1);
+      }
+      appendLog("info", `Computed fingerprints: ${fingerprintByIndex.size}/${activePhotos.length}.`);
+
+      for (let i = 0; i < batches.length; i += 1) {
+        throwIfAborted(abortController.signal);
+        const batch = batches[i];
+        appendLog("info", `Analyzing batch ${i + 1}/${batches.length}...`);
+        try {
+          const results = await runBatchForProvider(batch);
+          const normalized = normalizeBatchResults(results, batch, i + 1);
+          merged.push(...normalized);
+          appendLog("info", `Batch ${i + 1} raw parsed result: ${JSON.stringify(normalized)}`);
+          appendLog("info", `Batch ${i + 1} completed.`);
+          updateProgress(`Analyzing images (${merged.length}/${activePhotos.length})`, batch.length);
+        } catch (error) {
+          if (isAbortError(error)) throw error;
+          const message = errorToMessage(error);
+          failedBatches.push({ batch, batchNumber: i + 1, reason: message });
+          appendLog("error", `Batch ${i + 1} failed on first attempt: ${message}`);
+          appendLog("info", `Batch ${i + 1} deferred for a later retry.`);
+        }
+      }
+
+      for (const failed of failedBatches) {
+        throwIfAborted(abortController.signal);
+        appendLog("info", `Retrying deferred batch ${failed.batchNumber}/${batches.length}...`);
+        try {
+          const results = await runBatchForProvider(failed.batch);
+          const normalized = normalizeBatchResults(results, failed.batch, failed.batchNumber);
+          merged.push(...normalized);
+          appendLog("info", `Deferred batch ${failed.batchNumber} recovered: ${JSON.stringify(normalized)}`);
+          appendLog("success", `Deferred batch ${failed.batchNumber} succeeded on retry.`);
+          updateProgress(`Analyzing images (${merged.length}/${activePhotos.length})`, failed.batch.length);
+        } catch (retryError) {
+          if (isAbortError(retryError)) throw retryError;
+          const retryMessage = errorToMessage(retryError);
+          appendLog("error", `Deferred batch ${failed.batchNumber} still failed: ${retryMessage}`);
+          if (!canFallbackToLocal) {
+            throw retryError;
+          }
+          appendLog("info", `Falling back to local analysis for batch ${failed.batchNumber}.`);
+          const fallbackResults = await runLocalBatch({
+            photos: failed.batch,
+            themePrompt,
+            appendLog,
+            signal: abortController.signal
+          });
+          const normalized = normalizeBatchResults(fallbackResults, failed.batch, failed.batchNumber);
+          merged.push(...normalized);
+          appendLog("success", `Batch ${failed.batchNumber} completed using local fallback.`);
+          updateProgress(`Analyzing images (${merged.length}/${activePhotos.length})`, failed.batch.length);
+        }
       }
 
       setAnalysisProgressLabel("Optimizing final album selection...");
