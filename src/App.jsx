@@ -1675,6 +1675,18 @@ function normalizeSelectedIds(ids) {
   return normalized;
 }
 
+function downloadJsonFile(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
 export default function App() {
   const [photos, setPhotos] = useState([]);
   const [albumSize, setAlbumSize] = useState(MIN_ALBUM);
@@ -1779,6 +1791,79 @@ export default function App() {
   const selectedPhotos = useMemo(
     () => selectedIds.map((id) => activePhotosById.get(id)).filter(Boolean),
     [activePhotosById, selectedIds]
+  );
+  const debugExportData = useMemo(
+    () => ({
+      exportedAt: new Date().toISOString(),
+      provider,
+      albumSize,
+      currentStep,
+      settings: {
+        themePreset,
+        themePrompt,
+        lookalikeThreshold,
+        clusterStrictness,
+        themeStrictness,
+        maxPerCluster,
+        cfProxyEndpoint,
+        cfProxyModel,
+        cfModel,
+        openaiModel,
+        openaiBaseUrl
+      },
+      summary: {
+        uploaded: activePhotos.length,
+        selected: selectedIds.length,
+        averageScore: stats.avg,
+        selectionRate: stats.rate
+      },
+      selectedIds,
+      selectedPhotos: selectedPhotos.map((photo) => ({
+        id: photo.id,
+        name: photo.name,
+        previewUrl: photo.previewUrl,
+        removed: Boolean(photo.removed),
+        analysis: photo.analysis || null
+      })),
+      scoredPhotos,
+      clusterReport,
+      diagnosticInsights,
+      logs,
+      errorMessage,
+      photos: activePhotos.map((photo) => ({
+        id: photo.id,
+        name: photo.name,
+        previewUrl: photo.previewUrl,
+        removed: Boolean(photo.removed),
+        analysis: photo.analysis || null
+      }))
+    }),
+    [
+      activePhotos,
+      albumSize,
+      cfModel,
+      cfProxyEndpoint,
+      cfProxyModel,
+      clusterReport,
+      clusterStrictness,
+      currentStep,
+      diagnosticInsights,
+      errorMessage,
+      logs,
+      lookalikeThreshold,
+      maxPerCluster,
+      openaiBaseUrl,
+      openaiModel,
+      provider,
+      scoredPhotos,
+      selectedIds,
+      selectedPhotos,
+      stats.avg,
+      stats.rate,
+      themePreset,
+      themePrompt,
+      themeStrictness
+    ]
   );
 
   const canAdvanceToConfigure = activePhotos.length > 0 && !isPreparingFiles;
@@ -1989,6 +2074,12 @@ export default function App() {
 
   function toggleCluster(clusterId) {
     setOpenClusterIds((prev) => (prev.includes(clusterId) ? prev.filter((id) => id !== clusterId) : [...prev, clusterId]));
+  }
+
+  function downloadDebugExport() {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    downloadJsonFile(`ai-album-selector-debug-${stamp}.json`, debugExportData);
+    appendLog("info", "Downloaded debug JSON export for this analysis run.");
   }
 
   async function startAnalysis() {
@@ -2772,6 +2863,9 @@ export default function App() {
           </section>
 
           <div className="step-actions">
+            <button type="button" className="analyze-btn" onClick={downloadDebugExport}>
+              Download Debug JSON
+            </button>
             <button type="button" className="secondary-btn" onClick={() => setCurrentStep(2)}>
               Back To Configure
             </button>
