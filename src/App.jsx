@@ -1792,6 +1792,19 @@ export default function App() {
     () => selectedIds.map((id) => activePhotosById.get(id)).filter(Boolean),
     [activePhotosById, selectedIds]
   );
+
+  const canAdvanceToConfigure = activePhotos.length > 0 && !isPreparingFiles;
+  const canShowResults = selectedIds.length > 0 || isAnalyzing;
+
+  const stats = useMemo(() => {
+    const avg = average(selectedPhotos.map((p) => p.analysis?.adjustedOverall || 0));
+    return {
+      selected: selectedPhotos.length,
+      uploaded: activePhotos.length,
+      avg,
+      rate: activePhotos.length ? (selectedPhotos.length / activePhotos.length) * 100 : 0
+    };
+  }, [activePhotos.length, selectedPhotos]);
   const debugExportData = useMemo(
     () => ({
       exportedAt: new Date().toISOString(),
@@ -1865,19 +1878,6 @@ export default function App() {
       themeStrictness
     ]
   );
-
-  const canAdvanceToConfigure = activePhotos.length > 0 && !isPreparingFiles;
-  const canShowResults = selectedIds.length > 0 || isAnalyzing;
-
-  const stats = useMemo(() => {
-    const avg = average(selectedPhotos.map((p) => p.analysis?.adjustedOverall || 0));
-    return {
-      selected: selectedPhotos.length,
-      uploaded: activePhotos.length,
-      avg,
-      rate: activePhotos.length ? (selectedPhotos.length / activePhotos.length) * 100 : 0
-    };
-  }, [activePhotos.length, selectedPhotos]);
 
   const activePhoto = photos.find((p) => p.id === activePhotoId) || null;
   const switchTargetPhoto = switchTargetId ? activePhotosById.get(switchTargetId) || null : null;
