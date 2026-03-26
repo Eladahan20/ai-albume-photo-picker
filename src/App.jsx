@@ -1020,6 +1020,12 @@ function applySmartSelection({
     for (const candidate of refillPool) {
       if (postProcessed.length >= targetCount) break;
       if (postProcessed.some((x) => x.index === candidate.index)) continue;
+      const meta = byIndex.get(candidate.index);
+      const clusterAlreadyPicked = postProcessed.reduce(
+        (count, item) => count + ((byIndex.get(item.index)?.clusterId === meta?.clusterId) ? 1 : 0),
+        0
+      );
+      if (clusterAlreadyPicked >= maxClusterPicks) continue;
       const fpCandidate = fingerprintByIndex.get(candidate.index);
       if (fpCandidate && fpCandidate.visibilityScore < hardMinVisibility) {
         lowVisibilityFiltered += 1;
@@ -1040,6 +1046,12 @@ function applySmartSelection({
     for (const candidate of rankedFallback) {
       if (postProcessed.length >= targetCount) break;
       if (postProcessed.some((x) => x.index === candidate.index)) continue;
+      const meta = byIndex.get(candidate.index);
+      const clusterAlreadyPicked = postProcessed.reduce(
+        (count, item) => count + ((byIndex.get(item.index)?.clusterId === meta?.clusterId) ? 1 : 0),
+        0
+      );
+      if (clusterAlreadyPicked >= maxClusterPicks) continue;
       postProcessed.push(candidate);
     }
   }
@@ -1049,6 +1061,7 @@ function applySmartSelection({
   const finalScored = scored.map((item) => {
     const isPicked = selectedPostSet.has(item.index);
     const meta = byIndex.get(item.index) || {};
+    const fp = fingerprintByIndex.get(item.index);
     const clusterPenalty =
       meta?.intraClusterRank > 0 ? meta.intraClusterRank * (5 + strictScale * 2) + (meta.clusterSize || 1) * 1.2 : 0;
     const adjustedOverall = clamp(Math.round(item.adjustedBase - clusterPenalty - (isPicked ? 0 : 4)), 0, 100);
@@ -1056,6 +1069,7 @@ function applySmartSelection({
     return {
       ...item,
       adjustedOverall,
+      visibilityScore: Number(fp?.visibilityScore || 0),
       selectionFlags,
       mmrSelected: isPicked,
       clusterId: meta.clusterId,
