@@ -1675,6 +1675,14 @@ function normalizeSelectedIds(ids) {
   return normalized;
 }
 
+function classifyAnalysisStatus(reason = "", provider = "local") {
+  const normalizedReason = String(reason || "").toLowerCase();
+  if (provider === "local") return "local_success";
+  if (normalizedReason.includes("failed for this image")) return "remote_failure";
+  if (normalizedReason.includes("recovered from truncated model output")) return "remote_salvaged";
+  return "remote_success";
+}
+
 function downloadJsonFile(filename, data) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -2120,7 +2128,7 @@ export default function App() {
         setAnalysisProgress(clamp(pct, 0, 100));
         setAnalysisProgressLabel(label);
       };
-      const normalizeBatchResults = (results, batch, batchNumber) => {
+      const normalizeBatchResults = (results, batch, batchNumber, source = provider) => {
         if (!Array.isArray(results)) {
           throw new Error(`Batch ${batchNumber} returned invalid payload: expected JSON array.`);
         }
@@ -2133,6 +2141,11 @@ export default function App() {
           const mappedIndex = byId.get(batchPhoto.id);
           const descriptor = normalizeDescriptor(item.descriptor, item.scene, item.tags);
           const signals = normalizeAnalysisSignals(item, descriptor, item.tags);
+          const reason = String(item.reason || "No reason provided.");
+          const analysisStatus =
+            source === "local-fallback"
+              ? "local_fallback"
+              : classifyAnalysisStatus(reason, source === "local" ? "local" : provider);
 
           return {
             index: mappedIndex,
@@ -2146,7 +2159,8 @@ export default function App() {
             tags: Array.isArray(item.tags) ? item.tags.map((t) => String(t)) : [],
             descriptor,
             ...signals,
-            reason: String(item.reason || "No reason provided."),
+            reason,
+            analysisStatus,
             albumWorthy: Boolean(item.albumWorthy)
           };
         });
@@ -2222,7 +2236,7 @@ export default function App() {
         appendLog("info", `Analyzing batch ${i + 1}/${batches.length}...`);
         try {
           const results = await runBatchForProvider(batch);
-          const normalized = normalizeBatchResults(results, batch, i + 1);
+          const normalized = normalizeBatchResults(results, batch, i + 1, provider);
           merged.push(...normalized);
           appendLog("info", `Batch ${i + 1} raw parsed result: ${JSON.stringify(normalized)}`);
           appendLog("info", `Batch ${i + 1} completed.`);
@@ -2241,7 +2255,7 @@ export default function App() {
         appendLog("info", `Retrying deferred batch ${failed.batchNumber}/${batches.length}...`);
         try {
           const results = await runBatchForProvider(failed.batch);
-          const normalized = normalizeBatchResults(results, failed.batch, failed.batchNumber);
+          const normalized = normalizeBatchResults(results, failed.batch, failed.batchNumber, provider);
           merged.push(...normalized);
           appendLog("info", `Deferred batch ${failed.batchNumber} recovered: ${JSON.stringify(normalized)}`);
           appendLog("success", `Deferred batch ${failed.batchNumber} succeeded on retry.`);
@@ -2260,7 +2274,7 @@ export default function App() {
             appendLog,
             signal: abortController.signal
           });
-          const normalized = normalizeBatchResults(fallbackResults, failed.batch, failed.batchNumber);
+          const normalized = normalizeBatchResults(fallbackResults, failed.batch, failed.batchNumber, "local-fallback");
           merged.push(...normalized);
           appendLog("success", `Batch ${failed.batchNumber} completed using local fallback.`);
           updateProgress(`Analyzing images (${merged.length}/${activePhotos.length})`, failed.batch.length);
@@ -2268,9 +2282,35 @@ export default function App() {
       }
 
       setAnalysisProgressLabel("Optimizing final album selection...");
+      const remoteFailures = merged.filter((item) => item.analysisStatus === "remote_failure");
+      const localFallbacks = merged.filter((item) => item.analysisStatus === "local_fallback");
+      const healthyAnalyses = merged.filter((item) => item.analysisStatus !== "remote_failure");
+      const remoteFailureRate = merged.length ? remoteFailures.length / merged.length : 0;
+      if (remoteFailures.length) {
+        appendLog(
+          "info",
+          `Analysis health: ${healthyAnalyses.length}/${merged.length} usable, ${remoteFailures.length} upstream failures, ${localFallbacks.length} local fallbacks.`
+        );
+      }
+      if (!healthyAnalyses.length) {
+        const message = "All remote image analyses failed. No album was generated. Please retry later or switch provider.";
+        setErrorMessage(message);
+        if (typeof window !== "undefined") {
+          window.alert(message);
+        }
+        throw new Error(message);
+      }
+      if (remoteFailureRate >= 0.35) {
+        const message = `Too many remote analyses failed (${remoteFailures.length}/${merged.length}). No album was generated because the run is unreliable. Please retry later, reduce album size, or switch provider.`;
+        setErrorMessage(message);
+        if (typeof window !== "undefined") {
+          window.alert(message);
+        }
+        throw new Error(message);
+      }
       const desired = clamp(albumSize, MIN_ALBUM, MAX_ALBUM);
-      if (merged.length < desired) {
-        const message = `Only ${merged.length} analyzed photo(s) are available, but the album size is set to ${desired}. Add more usable photos or lower the album size.`;
+      if (healthyAnalyses.length < desired) {
+        const message = `Only ${healthyAnalyses.length} usable analyzed photo(s) are available, but the album size is set to ${desired}. Add more photos, retry later, or lower the album size.`;
         setErrorMessage(message);
         if (typeof window !== "undefined") {
           window.alert(message);
@@ -2278,7 +2318,7 @@ export default function App() {
         throw new Error(message);
       }
       const { selectedIndexes: topIndexes, scored, stats: selectionStats, diagnostics } = applySmartSelection({
-        analyses: merged,
+        analyses: healthyAnalyses,
         targetCount: desired,
         fingerprintByIndex,
         themePrompt,
