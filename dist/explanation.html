@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>איך האפליקציה בוחרת תמונות לאלבום</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --success: #16a34a;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --radius: 22px;
+      --max: 1180px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Heebo",
+        "Noto Sans Hebrew", Arial, sans-serif;
+      background: linear-gradient(180deg, #f8fbff 0%, #f6f8fb 100%);
+      color: var(--text);
+      line-height: 1.7;
+    }
+
+    .page {
+      max-width: var(--max);
+      margin: 0 auto;
+      padding: 28px 18px 80px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+      border: 1px solid #dbeafe;
+      border-radius: 30px;
+      padding: 28px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      left: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      background: radial-gradient(circle, rgba(37, 99, 235, 0.08), transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 28px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 14px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(30px, 5vw, 52px);
+      line-height: 1.15;
+    }
+
+    .hero p {
+      margin: 0;
+      font-size: 18px;
+      color: var(--muted);
+      max-width: 720px;
+    }
+
+    .hero-visual {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 16px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-top: 22px;
+    }
+
+    .summary-card {
+      background: rgba(255,255,255,0.75);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      text-align: center;
+    }
+
+    .summary-card strong {
+      display: block;
+      font-size: 24px;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+
+    .section-title {
+      margin: 40px 0 14px;
+      font-size: 30px;
+    }
+
+    .section-subtitle {
+      margin: 0 0 28px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .steps {
+      display: grid;
+      gap: 22px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 24px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 22px;
+      box-shadow: var(--shadow);
+      align-items: center;
+    }
+
+    .step-visual {
+      background: linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%);
+      border: 1px solid #dbeafe;
+      border-radius: 18px;
+      padding: 12px;
+      min-height: 180px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: white;
+      font-weight: 800;
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+
+    .step h3 {
+      margin: 0 0 10px;
+      font-size: 28px;
+      line-height: 1.2;
+    }
+
+    .step h3 span {
+      display: block;
+      font-size: 15px;
+      color: var(--accent);
+      font-weight: 700;
+      margin-top: 6px;
+    }
+
+    .step p {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .bullets {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 8px;
+    }
+
+    .bullets li {
+      position: relative;
+      padding-right: 22px;
+      color: var(--text);
+    }
+
+    .bullets li::before {
+      content: "•";
+      position: absolute;
+      right: 0;
+      top: 0;
+      color: var(--accent);
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .note {
+      margin-top: 34px;
+      background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .note h2 {
+      margin: 0 0 10px;
+      font-size: 28px;
+    }
+
+    .note p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .flow span {
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-weight: 600;
+    }
+
+    .footer-line {
+      margin-top: 26px;
+      color: var(--muted);
+      font-size: 15px;
+      text-align: center;
+    }
+
+    svg {
+      max-width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    @media (max-width: 960px) {
+      .hero-grid,
+      .step {
+        grid-template-columns: 1fr;
+      }
+
+      .summary {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .step-visual {
+        min-height: 150px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .page {
+        padding: 16px 12px 50px;
+      }
+
+      .hero {
+        padding: 20px;
+        border-radius: 24px;
+      }
+
+      .summary {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 34px;
+      }
+
+      .step h3 {
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="hero-grid">
+        <div>
+          <div class="eyebrow">איך זה עובד בפועל</div>
+          <h1>כך האפליקציה בוחרת את התמונות הכי טובות לאלבום</h1>
+          <p>
+            האפליקציה עוברת על כל התמונות שלכם, מבינה מה יש בכל תמונה,
+            מזהה תמונות דומות, מדרגת את הרגעים הכי טובים, ובסוף מרכיבה
+            בחירה חכמה, מגוונת ומדויקת יותר — בלי שתצטרכו לעבור ידנית על הכול.
+          </p>
+
+          <div class="summary">
+            <div class="summary-card">
+              <strong>7</strong>
+              שלבים חכמים
+            </div>
+            <div class="summary-card">
+              <strong>פחות כפילויות</strong>
+              פחות תמונות כמעט זהות
+            </div>
+            <div class="summary-card">
+              <strong>יותר גיוון</strong>
+              רגעים, אנשים וזוויות שונות
+            </div>
+            <div class="summary-card">
+              <strong>אלבום חזק יותר</strong>
+              בחירה טובה יותר בפחות זמן
+            </div>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-hidden="true">
+          <svg viewBox="0 0 420 300" role="img">
+            <rect x="16" y="18" width="388" height="264" rx="24" fill="#ffffff" stroke="#dbeafe"/>
+            <rect x="36" y="44" width="88" height="64" rx="12" fill="#e0ecff"/>
+            <rect x="136" y="44" width="88" height="64" rx="12" fill="#dbeafe"/>
+            <rect x="236" y="44" width="88" height="64" rx="12" fill="#cfe0ff"/>
+            <rect x="86" y="124" width="88" height="64" rx="12" fill="#dbeafe"/>
+            <rect x="186" y="124" width="88" height="64" rx="12" fill="#e0ecff"/>
+            <path d="M322 156 C350 156, 366 138, 382 124" stroke="#2563eb" stroke-width="8" fill="none" stroke-linecap="round"/>
+            <circle cx="334" cy="158" r="24" fill="#2563eb"/>
+            <path d="M322 158 l10 10 l16 -20" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="66" y="214" width="288" height="24" rx="12" fill="#eff6ff"/>
+            <rect x="66" y="214" width="200" height="24" rx="12" fill="#2563eb" opacity="0.18"/>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <h2 class="section-title">פירוט השלבים</h2>
+    <p class="section-subtitle">
+      הנה מה שקורה מאחורי הקלעים, בשפה פשוטה וברורה.
+    </p>
+
+    <section class="steps">
+      <article class="step">
+        <div class="step-visual" aria-hidden="true">
+          <svg viewBox="0 0 220 160">
+            <rect x="20" y="26" width="58" height="44" rx="8" fill="#dbeafe"/>
+            <rect x="86" y="26" width="58" height="44" rx="8" fill="#bfdbfe"/>
+            <rect x="152" y="26" width="48" height="44" rx="8" fill="#dbeafe"/>
+            <path d="M40 104 h140" stroke="#93c5fd" stroke-width="10" stroke-linecap="round"/>
+            <path d="M110 84 v40" stroke="#2563eb" stroke-width="8" stroke-linecap="round"/>
+            <path d="M98 110 l12 14 l12 -14" stroke="#2563eb" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <div class="step-num">1</div>
+          <h3>
+            ייבוא והכנה
+            <span>Import and prep</span>
+          </h3>
+          <p>
+            קודם כול האפליקציה אוספת את התמונות ומכינה אותן לעבודה.
+            היא בודקת אילו קבצים נתמכים, ממירה במידת הצורך פורמטים כמו
+            HEIC/HEIF, ויוצרת תצוגות מקדימות מהירות.
+          </p>
+          <ul class="bullets">
+            <li>מסננת רק קבצים שהמערכת יודעת לטפל בהם.</li>
+            <li>ממירה פורמטים של אייפון כשצריך.</li>
+            <li>שומרת גרסה קלה לתצוגה מהירה בתוך האפליקציה.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="step-visual" aria-hidden="true">
+          <svg viewBox="0 0 220 160">
+            <rect x="30" y="22" width="70" height="90" rx="12" fill="#dbeafe"/>
+            <rect x="120" y="38" width="70" height="90" rx="12" fill="#bfdbfe"/>
+            <circle cx="56" cy="48" r="8" fill="#2563eb"/>
+            <path d="M40 92 l18 -18 l14 14 l16 -22 l12 26" stroke="#2563eb" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="124" y="56" width="58" height="8" rx="4" fill="#2563eb" opacity="0.55"/>
+            <rect x="124" y="74" width="44" height="8" rx="4" fill="#2563eb" opacity="0.4"/>
+            <rect x="124" y="92" width="52" height="8" rx="4" fill="#2563eb" opacity="0.25"/>
+          </svg>
+        </div>
+        <div>
+          <div class="step-num">2</div>
+          <h3>
+            יצירת “טביעת אצבע” לכל תמונה
+            <span>Fingerprint pass</span>
+          </h3>
+          <p>
+            לכל תמונה נוצרת תעודת זהות חזותית קטנה. במקום להחזיק רק את
+            התמונה עצמה, האפליקציה שומרת גם תיאור קצר שלה: צבעים,
+            בהירות, מבנה, גודל, יחס רוחב־גובה, זמן צילום ועוד.
+          </p>
+          <ul class="bullets">
+            <li>המערכת בודקת איך התמונה “נראית” בצורה מספרית.</li>
+            <li>כך אפשר לזהות מהר תמונות דומות מאוד או כמעט זהות.</li>
+            <li>זה מאפשר עבודה מהירה גם על אוסף גדול של תמונות.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="step-visual" aria-hidden="true">
+          <svg viewBox="0 0 220 160">
+            <rect x="24" y="26" width="76" height="98" rx="12" fill="#dbeafe"/>
+            <path d="M40 92 l18 -18 l14 14 l16 -22 l12 26" stroke="#2563eb" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="52" cy="50" r="9" fill="#2563eb"/>
+            <rect x="118" y="34" width="74" height="14" rx="7" fill="#dcfce7"/>
+            <rect x="118" y="58" width="60" height="14" rx="7" fill="#dbeafe"/>
+            <rect x="118" y="82" width="68" height="14" rx="7" fill="#ede9fe"/>
+            <rect x="118" y="106" width="48" height="14" rx="7" fill="#fee2e2"/>
+          </svg>
+        </div>
+        <div>
+          <div class="step-num">3</div>
+          <h3>
+            ניתוח מעמיק של כל תמונה
+            <span>Analysis pass</span>
+          </h3>
+          <p>
+            בשלב הזה האפליקציה בוחנת כל תמונה לעומק: עד כמה היא חדה,
+            עד כמה הקומפוזיציה שלה טובה, האם יש בה רגע רגשי, האם היא
+            מיוחדת, ברורה, מספרת סיפור, או שיש בה הסחות שמפריעות.
+          </p>
+          <ul class="bullets">
+            <li>התמונה מקבלת ציונים על איכות, קומפוזיציה וייחודיות.</li>
+            <li>נבדקים גם רגש, עוצמת הרגע, וסוג הסצנה.</li>
+            <li>המטרה היא לא רק “חדות”, אלא גם משמעות וחוויית צפייה.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="step-visual" aria-hidden="true">
+          <svg viewBox="0 0 220 160">
+            <rect x="24" y="28" width="172" height="104" rx="18" fill="#ffffff" stroke="#bfdbfe"/>
+            <rect x="38" y="44" width="50" height="24" rx="12" fill="#dbeafe"/>
+            <rect x="96" y="44" width="40" height="24" rx="12" fill="#dcfce7"/>
+            <rect x="144" y="44" width="40" height="24" rx="12" fill="#ede9fe"/>
+            <rect x="50" y="86" width="30" height="30" rx="15" fill="#2563eb" opacity="0.85"/>
+            <rect x="94" y="86" width="30" height="30" rx="15" fill="#2563eb" opacity="0.55"/>
+            <rect x="138" y="86" width="30" height="30" rx="15" fill="#2563eb" opacity="0.25"/>
+          </svg>
+        </div>
+        <div>
+          <div class="step-num">4</div>
+          <h3>
+            התאמה לנושא האלבום
+            <span>Theme matching</span>
+          </h3>
+          <p>
+            אם המשתמש מגדיר כיוון לאלבום — למשל טיול, משפחה, אירוע או
+            רגעים מרגשים — האפליקציה מתרגמת את הרעיון הזה למאפיינים
+            ברורים ומשווה אותם לתיאור של כל תמונה.
+          </p>
+          <ul class="bullets">
+            <li>נבדק מה הנושא המרכזי של התמונה.</li>
+            <li>המערכת בודקת מקום, סוג צילום, תפקיד באירוע ונוכחות אנשים או טקסט.</li>
+            <li>כך הבחירה מתאימה טוב יותר לסיפור שהאלבום אמור לספר.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="step-visual" aria-hidden="true">
+          <svg viewBox="0 0 220 160">
+            <circle cx="52" cy="56" r="18" fill="#dbeafe"/>
+            <circle cx="108" cy="46" r="18" fill="#bfdbfe"/>
+            <circle cx="88" cy="100" r="18" fill="#93c5fd"/>
+            <circle cx="170" cy="74" r="18" fill="#dbeafe"/>
+            <path d="M68 52 L90 48" stroke="#2563eb" stroke-width="4"/>
+            <path d="M60 68 L80 88" stroke="#2563eb" stroke-width="4"/>
+            <path d="M122 54 L154 68" stroke="#2563eb" stroke-width="4"/>
+          </svg>
+        </div>
+        <div>
+          <div class="step-num">5</div>
+          <h3>
+            קיבוץ תמונות דומות
+            <span>Similarity graph</span>
+          </h3>
+          <p>
+            עכשיו האפליקציה משווה בין התמונות ומזהה אילו מהן כמעט אותו דבר:
+            אותו רגע, אותה זווית, אותו burst מהטלפון, או כמה גרסאות
+            כמעט זהות של אותה סצנה.
+          </p>
+          <ul class="bullets">
+            <li>תמונות דומות מתאחדות לקבוצות.</li>
+            <li>כל קבוצה מייצגת “אותו רגע” או אותה וריאציה שלו.</li>
+            <li>כך נמנעת בחירה של הרבה תמונות שחוזרות על עצמן.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="step-visual" aria-hidden="true">
+          <svg viewBox="0 0 220 160">
+            <rect x="22" y="24" width="56" height="90" rx="12" fill="#dbeafe"/>
+            <rect x="82" y="40" width="56" height="74" rx="12" fill="#bfdbfe"/>
+            <rect x="142" y="56" width="56" height="58" rx="12" fill="#dbeafe"/>
+            <circle cx="50" cy="34" r="16" fill="#2563eb"/>
+            <path d="M42 34 l6 6 l10 -12" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <div class="step-num">6</div>
+          <h3>
+            בחירה חכמה ומגוונת
+            <span>Selection pass</span>
+          </h3>
+          <p>
+            בשלב הזה מתבצעת הבחירה עצמה. קודם נבחרת התמונה הטובה ביותר
+            מכל קבוצה של תמונות דומות, ורק אחר כך ממלאים את שאר המקומות
+            תוך איזון בין רלוונטיות לבין גיוון.
+          </p>
+          <ul class="bullets">
+            <li>המטרה היא לא רק לבחור “הכי גבוה בדירוג”.</li>
+            <li>המערכת גם דואגת שלא כל האלבום ייראה אותו דבר.</li>
+            <li>כך מתקבלת תוצאה עשירה יותר, עם רגעים, אנשים וזוויות שונות.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="step-visual" aria-hidden="true">
+          <svg viewBox="0 0 220 160">
+            <rect x="34" y="28" width="56" height="76" rx="12" fill="#fee2e2"/>
+            <path d="M48 44 l28 28" stroke="#dc2626" stroke-width="5" stroke-linecap="round"/>
+            <path d="M76 44 l-28 28" stroke="#dc2626" stroke-width="5" stroke-linecap="round"/>
+            <rect x="118" y="36" width="68" height="88" rx="12" fill="#dcfce7"/>
+            <circle cx="152" cy="64" r="18" fill="#16a34a"/>
+            <path d="M144 64 l7 7 l13 -15" stroke="#fff" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <div class="step-num">7</div>
+          <h3>
+            ניקוי ושיפור סופי
+            <span>Post-processing</span>
+          </h3>
+          <p>
+            לפני שמחזירים את התוצאה, האפליקציה עושה בדיקה אחרונה:
+            היא מסירה תמונות עם פריימינג חלש, נראות נמוכה, או דמיון חזק
+            מדי לאחרות — ואם נוצר חוסר, היא משלימה עם המועמדים הטובים הבאים.
+          </p>
+          <ul class="bullets">
+            <li>נזרקות תמונות חלשות, חשוכות או פחות ברורות.</li>
+            <li>נמנעות “כמעט כפילויות” שנשארו אחרי הסינון.</li>
+            <li>המערכת ממלאת מחדש לפי המועמדים הטובים שנותרו.</li>
+          </ul>
+        </div>
+      </article>
+    </section>
+
+    <section class="note">
+      <h2>בשורה התחתונה</h2>
+      <p>
+        האפליקציה לא רק “מוצאת תמונות יפות”. היא בונה הבנה רחבה של כל
+        מאגר התמונות, מזהה רגעים דומים, מבינה מה הכי מתאים לסיפור של
+        האלבום, ובסוף בוחרת תוצאה שמרגישה הרבה יותר מסודרת, חכמה ומגוונת.
+      </p>
+
+      <div class="flow" aria-label="תהליך העבודה">
+        <span>ייבוא</span>
+        <span>טביעת אצבע</span>
+        <span>ניתוח</span>
+        <span>התאמה לנושא</span>
+        <span>קיבוץ דומות</span>
+        <span>בחירה</span>
+        <span>ניקוי סופי</span>
+      </div>
+
+      <div class="footer-line">
+        המטרה: פחות התעסקות ידנית, פחות כפילויות, ואלבום חזק יותר.
+      </div>
+    </section>
+  </main>
+</body>
+</html>

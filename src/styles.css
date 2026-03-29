@@ -158,6 +158,44 @@ footer {
   border-radius: var(--bs-border-radius);
 }
 
+.presentation-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+  background: linear-gradient(135deg, var(--bs-body-bg) 0%, var(--bs-primary-bg-subtle) 100%);
+  border: 1px solid var(--bs-primary-border-subtle);
+  border-radius: var(--bs-border-radius-lg);
+  box-shadow: var(--bs-box-shadow-sm);
+}
+
+.presentation-link small {
+  display: inline-block;
+  margin-bottom: 0.35rem;
+  color: var(--bs-primary-text-emphasis);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.presentation-link h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.35rem;
+}
+
+.presentation-link p {
+  margin: 0;
+  color: var(--bs-secondary-color);
+  max-width: 760px;
+}
+
+.presentation-link-btn {
+  flex-shrink: 0;
+  text-decoration: none;
+}
+
 .analysis-progress-head,
 .cluster-head,
 .card-meta,
@@ -585,7 +623,8 @@ footer {
 
   .step-screen-head,
   .step-actions,
-  .cluster-head {
+  .cluster-head,
+  .presentation-link {
     flex-direction: column;
     align-items: stretch;
   }

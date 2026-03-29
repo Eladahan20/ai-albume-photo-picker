@@ -1294,77 +1294,6 @@ function buildPresentationSections({
   };
 }
 
-function PresentationExplainer({ presentationSections }) {
-  return (
-    <section className="explain-panel card">
-      <h2>How This Works Under The Hood</h2>
-      <p>
-        This section is designed for demos. It explains the current pipeline, algorithms, provider, and cost model using the live settings on screen.
-      </p>
-
-      <div className="explain-grid">
-        <article className="explain-card">
-          <h3>Plain-English Overview</h3>
-          <ul>
-            {presentationSections.overview.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </article>
-
-        <article className="explain-card">
-          <h3>Pipeline Flow</h3>
-          <ul>
-            {presentationSections.flow.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </article>
-
-        <article className="explain-card">
-          <h3>Algorithms</h3>
-          <ul>
-            {presentationSections.algorithms.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </article>
-
-        <article className="explain-card">
-          <h3>Current Run Settings</h3>
-          <ul>
-            {presentationSections.current.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </article>
-
-        <article className="explain-card">
-          <h3>Pricing Snapshot</h3>
-          <ul>
-            {presentationSections.pricing.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </article>
-
-        <article className="explain-card">
-          <h3>Ways Forward</h3>
-          <ul>
-            {presentationSections.roadmap.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-          <p className="roadmap-note">
-            Forward-looking model references: {MODEL_PRICING_SNAPSHOT.future_openai.label} ({MODEL_PRICING_SNAPSHOT.future_openai.price}) and{" "}
-            {MODEL_PRICING_SNAPSHOT.future_openai_budget.label} ({MODEL_PRICING_SNAPSHOT.future_openai_budget.price}).
-          </p>
-        </article>
-      </div>
-    </section>
-  );
-}
-
 async function runCloudflareBatch({ photos, themePrompt, appendLog, endpoint, proxyToken, model, signal }) {
   const resolvedEndpoint = normalizeEndpointUrl(endpoint);
   if (!isAbsoluteHttpUrl(resolvedEndpoint)) {
@@ -2103,36 +2032,6 @@ export default function App() {
       themeStrictness
     ]
   );
-  const presentationSections = useMemo(
-    () =>
-      buildPresentationSections({
-        provider,
-        albumSize,
-        activeCount: activePhotos.length,
-        themePrompt,
-        lookalikeThreshold,
-        clusterStrictness,
-        themeStrictness,
-        maxPerCluster,
-        cfProxyModel,
-        cfModel,
-        openaiModel
-      }),
-    [
-      provider,
-      albumSize,
-      activePhotos.length,
-      themePrompt,
-      lookalikeThreshold,
-      clusterStrictness,
-      themeStrictness,
-      maxPerCluster,
-      cfProxyModel,
-      cfModel,
-      openaiModel
-    ]
-  );
-
   const activePhoto = photos.find((p) => p.id === activePhotoId) || null;
   const switchTargetPhoto = switchTargetId ? activePhotosById.get(switchTargetId) || null : null;
   const switchCandidates = useMemo(() => {
@@ -2689,7 +2588,19 @@ export default function App() {
         <p>Pick your strongest album photos with AI scoring and diversity-aware ranking.</p>
       </header>
 
-      <PresentationExplainer presentationSections={presentationSections} />
+      <section className="presentation-link card">
+        <div>
+          <small>Presentation</small>
+          <h2>Need a simple explanation page first?</h2>
+          <p>
+            Open the dedicated homepage explanation to walk coworkers through the seven steps in Hebrew before uploading any
+            images.
+          </p>
+        </div>
+        <a className="analyze-btn presentation-link-btn" href="/explanation.html" target="_blank" rel="noreferrer">
+          Open Explanation Page
+        </a>
+      </section>
 
       <section className="step-progress">
         {["Upload", "Configure", "Results"].map((label, idx) => {
