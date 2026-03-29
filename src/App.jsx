@@ -1294,6 +1294,77 @@ function buildPresentationSections({
   };
 }
 
+function PresentationExplainer({ presentationSections }) {
+  return (
+    <section className="explain-panel card">
+      <h2>How This Works Under The Hood</h2>
+      <p>
+        This section is designed for demos. It explains the current pipeline, algorithms, provider, and cost model using the live settings on screen.
+      </p>
+
+      <div className="explain-grid">
+        <article className="explain-card">
+          <h3>Plain-English Overview</h3>
+          <ul>
+            {presentationSections.overview.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="explain-card">
+          <h3>Pipeline Flow</h3>
+          <ul>
+            {presentationSections.flow.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="explain-card">
+          <h3>Algorithms</h3>
+          <ul>
+            {presentationSections.algorithms.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="explain-card">
+          <h3>Current Run Settings</h3>
+          <ul>
+            {presentationSections.current.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="explain-card">
+          <h3>Pricing Snapshot</h3>
+          <ul>
+            {presentationSections.pricing.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="explain-card">
+          <h3>Ways Forward</h3>
+          <ul>
+            {presentationSections.roadmap.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          <p className="roadmap-note">
+            Forward-looking model references: {MODEL_PRICING_SNAPSHOT.future_openai.label} ({MODEL_PRICING_SNAPSHOT.future_openai.price}) and{" "}
+            {MODEL_PRICING_SNAPSHOT.future_openai_budget.label} ({MODEL_PRICING_SNAPSHOT.future_openai_budget.price}).
+          </p>
+        </article>
+      </div>
+    </section>
+  );
+}
+
 async function runCloudflareBatch({ photos, themePrompt, appendLog, endpoint, proxyToken, model, signal }) {
   const resolvedEndpoint = normalizeEndpointUrl(endpoint);
   if (!isAbsoluteHttpUrl(resolvedEndpoint)) {
@@ -2618,6 +2689,8 @@ export default function App() {
         <p>Pick your strongest album photos with AI scoring and diversity-aware ranking.</p>
       </header>
 
+      <PresentationExplainer presentationSections={presentationSections} />
+
       <section className="step-progress">
         {["Upload", "Configure", "Results"].map((label, idx) => {
           const stepNumber = idx + 1;
@@ -2967,72 +3040,6 @@ export default function App() {
             </div>
           </section>
 
-          <section className="explain-panel card">
-            <h2>How This Works Under The Hood</h2>
-            <p>
-              This section is designed for demos. It explains the current pipeline, algorithms, provider, and cost model using the live settings on screen.
-            </p>
-
-            <div className="explain-grid">
-              <article className="explain-card">
-                <h3>Plain-English Overview</h3>
-                <ul>
-                  {presentationSections.overview.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </article>
-
-              <article className="explain-card">
-                <h3>Pipeline Flow</h3>
-                <ul>
-                  {presentationSections.flow.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </article>
-
-              <article className="explain-card">
-                <h3>Algorithms</h3>
-                <ul>
-                  {presentationSections.algorithms.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </article>
-
-              <article className="explain-card">
-                <h3>Current Run Settings</h3>
-                <ul>
-                  {presentationSections.current.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </article>
-
-              <article className="explain-card">
-                <h3>Pricing Snapshot</h3>
-                <ul>
-                  {presentationSections.pricing.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </article>
-
-              <article className="explain-card">
-                <h3>Ways Forward</h3>
-                <ul>
-                  {presentationSections.roadmap.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-                <p className="roadmap-note">
-                  Forward-looking model references: {MODEL_PRICING_SNAPSHOT.future_openai.label} ({MODEL_PRICING_SNAPSHOT.future_openai.price}) and{" "}
-                  {MODEL_PRICING_SNAPSHOT.future_openai_budget.label} ({MODEL_PRICING_SNAPSHOT.future_openai_budget.price}).
-                </p>
-              </article>
-            </div>
-          </section>
         </section>
       ) : null}
 
