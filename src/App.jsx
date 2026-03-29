@@ -7,8 +7,8 @@ const MAX_ALBUM = 100;
 const CLOUDFLARE_ENDPOINT = import.meta.env.VITE_CLOUDFLARE_VISION_ENDPOINT || "/api/cloudflare/vision";
 const DEFAULT_PROVIDER = (import.meta.env.VITE_AI_PROVIDER || "local").toLowerCase();
 const DEFAULT_CF_MODEL = import.meta.env.VITE_CLOUDFLARE_MODEL || "@cf/meta/llama-3.2-11b-vision-instruct";
-const DEFAULT_OPENAI_MODEL = import.meta.env.VITE_OPENAI_MODEL || "gpt-4.1-mini";
-const DEFAULT_OPENAI_BASE_URL = import.meta.env.VITE_OPENAI_BASE_URL || "https://api.openai.com/v1/chat/completions";
+const DEFAULT_OPENAI_MODEL = import.meta.env.VITE_OPENAI_MODEL || "gpt-5-mini";
+const DEFAULT_OPENAI_BASE_URL = import.meta.env.VITE_OPENAI_BASE_URL || "https://api.openai.com/v1/responses";
 const THEME_PRESETS = {
   custom: {
     label: "Custom Prompt",
@@ -54,8 +54,8 @@ const MODEL_PRICING_SNAPSHOT = {
     detail: "Workers AI vision model used by the included Cloudflare proxy."
   },
   openai: {
-    label: "gpt-4.1-mini",
-    price: "$0.40 / 1M input tokens, $1.60 / 1M output tokens",
+    label: "gpt-5-mini",
+    price: "$0.25 / 1M input tokens, $2.00 / 1M output tokens",
     detail: "OpenAI multimodal model used through direct mode or the proxy Worker."
   },
   future_openai: {
@@ -230,6 +230,28 @@ function extractFirstJsonArray(text) {
     throw new Error("No JSON array found in API response text.");
   }
   return JSON.parse(match[0]);
+}
+
+function extractOpenAITextFromPayload(payload, fallbackText = "") {
+  const outputText = payload?.output_text;
+  if (typeof outputText === "string" && outputText.trim()) return outputText;
+
+  const contentOut = payload?.choices?.[0]?.message?.content;
+  if (typeof contentOut === "string" && contentOut.trim()) return contentOut;
+  if (Array.isArray(contentOut)) {
+    const joined = contentOut.map((part) => part?.text || "").join("\n").trim();
+    if (joined) return joined;
+  }
+
+  const output = Array.isArray(payload?.output) ? payload.output : [];
+  const responseText = output
+    .flatMap((item) => (Array.isArray(item?.content) ? item.content : []))
+    .map((part) => part?.text || "")
+    .join("\n")
+    .trim();
+  if (responseText) return responseText;
+
+  return fallbackText;
 }
 
 async function fileToImageBitmap(file) {
@@ -1115,6 +1137,17 @@ function applySmartSelection({
     }
   }
 
+  if (postProcessed.length < targetCount) {
+    // Safety net: if strict diversity rules over-prune the album, fill the remaining
+    // slots by score so the user still gets a complete album instead of a hard failure.
+    const emergencyFallback = [...scored].sort((a, b) => b.adjustedBase - a.adjustedBase);
+    for (const candidate of emergencyFallback) {
+      if (postProcessed.length >= targetCount) break;
+      if (postProcessed.some((x) => x.index === candidate.index)) continue;
+      postProcessed.push(candidate);
+    }
+  }
+
   const selectedIndexes = postProcessed.slice(0, targetCount).map((s) => s.index);
   const selectedPostSet = new Set(selectedIndexes);
   const finalScored = scored.map((item) => {
@@ -1422,16 +1455,15 @@ async function runOpenAIProxyBatch({ photos, themePrompt, appendLog, endpoint, p
   }
 
   const prompt = buildPrompt(themePrompt);
-  const content = [{ type: "text", text: prompt }];
+  const content = [{ type: "input_text", text: prompt }];
 
   for (const photo of photos) {
     throwIfAborted(signal);
     const b64 = await toBase64JpegThumbnail(photo.file, 512);
     content.push({
-      type: "image_url",
-      image_url: {
-        url: `data:image/jpeg;base64,${b64}`
-      }
+      type: "input_image",
+      image_url: `data:image/jpeg;base64,${b64}`,
+      detail: "low"
     });
   }
 
@@ -1453,7 +1485,7 @@ async function runOpenAIProxyBatch({ photos, themePrompt, appendLog, endpoint, p
         body: JSON.stringify({
           provider: "openai",
           model: model?.trim() || DEFAULT_OPENAI_MODEL,
-          messages: [
+          input: [
             {
               role: "user",
               content
@@ -1489,13 +1521,7 @@ async function runOpenAIProxyBatch({ photos, themePrompt, appendLog, endpoint, p
   let parsed;
   try {
     const maybeJson = JSON.parse(rawText);
-    const contentOut = maybeJson?.choices?.[0]?.message?.content;
-    const textFromPayload =
-      typeof contentOut === "string"
-        ? contentOut
-        : Array.isArray(contentOut)
-          ? contentOut.map((part) => part?.text || "").join("\n")
-          : maybeJson?.text || rawText;
+    const textFromPayload = extractOpenAITextFromPayload(maybeJson, rawText);
     parsed = extractFirstJsonArray(textFromPayload);
   } catch {
     parsed = extractFirstJsonArray(rawText);
@@ -1577,15 +1603,14 @@ async function runOpenAIDirectBatch({ photos, themePrompt, appendLog, apiKey, mo
   }
 
   const prompt = buildPrompt(themePrompt);
-  const content = [{ type: "text", text: prompt }];
+  const content = [{ type: "input_text", text: prompt }];
   for (const photo of photos) {
     throwIfAborted(signal);
     const b64 = await toBase64JpegThumbnail(photo.file, 512);
     content.push({
-      type: "image_url",
-      image_url: {
-        url: `data:image/jpeg;base64,${b64}`
-      }
+      type: "input_image",
+      image_url: `data:image/jpeg;base64,${b64}`,
+      detail: "low"
     });
   }
 
@@ -1605,7 +1630,7 @@ async function runOpenAIDirectBatch({ photos, themePrompt, appendLog, apiKey, mo
       },
       body: JSON.stringify({
         model: (model || DEFAULT_OPENAI_MODEL).trim(),
-        messages: [
+        input: [
           {
             role: "user",
             content
@@ -1629,13 +1654,7 @@ async function runOpenAIDirectBatch({ photos, themePrompt, appendLog, apiKey, mo
   let parsed;
   try {
     const maybeJson = JSON.parse(rawText);
-    const contentOut = maybeJson?.choices?.[0]?.message?.content;
-    const textFromPayload =
-      typeof contentOut === "string"
-        ? contentOut
-        : Array.isArray(contentOut)
-          ? contentOut.map((part) => part?.text || "").join("\n")
-          : maybeJson?.text || rawText;
+    const textFromPayload = extractOpenAITextFromPayload(maybeJson, rawText);
     parsed = extractFirstJsonArray(textFromPayload);
   } catch {
     parsed = extractFirstJsonArray(rawText);
@@ -2807,7 +2826,7 @@ export default function App() {
                 {provider === "cloudflare" ? "Proxy Model Hint" : "OpenAI Model"}
                 <input
                   type="text"
-                  placeholder={provider === "cloudflare" ? "@cf/meta/llama-3.2-11b-vision-instruct" : "gpt-4.1-mini"}
+                  placeholder={provider === "cloudflare" ? "@cf/meta/llama-3.2-11b-vision-instruct" : "gpt-5-mini"}
                   value={provider === "cloudflare" ? cfProxyModel : openaiModel}
                   onChange={(e) => (provider === "cloudflare" ? setCfProxyModel(e.target.value) : setOpenaiModel(e.target.value))}
                 />
@@ -2862,7 +2881,7 @@ export default function App() {
                 OpenAI Model
                 <input
                   type="text"
-                  placeholder="gpt-4.1-mini"
+                  placeholder="gpt-5-mini"
                   value={openaiModel}
                   onChange={(e) => setOpenaiModel(e.target.value)}
                 />
@@ -2871,7 +2890,7 @@ export default function App() {
                 OpenAI Base URL
                 <input
                   type="text"
-                  placeholder="https://api.openai.com/v1/chat/completions"
+                  placeholder="https://api.openai.com/v1/responses"
                   value={openaiBaseUrl}
                   onChange={(e) => setOpenaiBaseUrl(normalizeEndpointUrl(e.target.value))}
                 />

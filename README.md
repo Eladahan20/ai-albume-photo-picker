@@ -76,8 +76,8 @@ Optional Worker vars:
 
 ```toml
 [vars]
-OPENAI_MODEL = "gpt-4.1-mini"
-OPENAI_BASE_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_MODEL = "gpt-5-mini"
+OPENAI_BASE_URL = "https://api.openai.com/v1/responses"
 ```
 
 Then in the app UI choose `OpenAI endpoint (proxy)` and set:
@@ -184,7 +184,7 @@ https://ai-album-selector-vision.<subdomain>.workers.dev
 ```bash
 VITE_AI_PROVIDER=openai
 VITE_CLOUDFLARE_VISION_ENDPOINT=https://ai-album-selector-vision.<subdomain>.workers.dev
-VITE_OPENAI_MODEL=gpt-4.1-mini
+VITE_OPENAI_MODEL=gpt-5-mini
 ```
 
 If you want Cloudflare AI as the default instead:

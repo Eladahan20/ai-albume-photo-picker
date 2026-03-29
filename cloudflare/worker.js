@@ -213,9 +213,19 @@ function responseTextFromPayload(raw) {
     const contentOut = parsed?.choices?.[0]?.message?.content;
     if (typeof contentOut === "string") return contentOut;
     if (Array.isArray(contentOut)) return contentOut.map((part) => part?.text || "").join("\n");
+    if (typeof parsed?.output_text === "string" && parsed.output_text.trim()) return parsed.output_text;
+    if (Array.isArray(parsed?.output)) {
+      const joined = parsed.output
+        .flatMap((item) => (Array.isArray(item?.content) ? item.content : []))
+        .map((part) => part?.text || "")
+        .join("\n")
+        .trim();
+      if (joined) return joined;
+    }
     const candidate =
       parsed?.result?.response ??
       parsed?.result?.output_text ??
+      parsed?.output_text ??
       parsed?.response ??
       parsed?.text ??
       parsed?.result ??
@@ -273,9 +283,35 @@ function asCfModel(value) {
 
 function normalizeOpenAIBaseUrl(value) {
   const raw = String(value || "").trim();
-  if (!raw) return "https://api.openai.com/v1/chat/completions";
+  if (!raw) return "https://api.openai.com/v1/responses";
   if (/^https?:\/\//i.test(raw)) return raw;
   return `https://${raw}`;
+}
+
+function normalizeOpenAIInput(body) {
+  if (Array.isArray(body?.input) && body.input.length) {
+    return body.input;
+  }
+
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  const userMsg = messages[0];
+  const content = Array.isArray(userMsg?.content) ? userMsg.content : [];
+  if (!content.length) return [];
+
+  return [
+    {
+      role: "user",
+      content: content.map((part) => {
+        if (part?.type === "text") {
+          return { type: "input_text", text: String(part?.text || "") };
+        }
+        if (part?.type === "image_url" && part?.image_url?.url) {
+          return { type: "input_image", image_url: String(part.image_url.url), detail: "low" };
+        }
+        return part;
+      })
+    }
+  ];
 }
 
 async function handleCloudflareProxy(body, env, corsHeaders) {
@@ -414,15 +450,15 @@ async function handleOpenAIProxy(body, env, corsHeaders) {
   }
 
   const baseUrl = normalizeOpenAIBaseUrl(env.OPENAI_BASE_URL);
-  const model = String(body?.model || env.OPENAI_MODEL || "gpt-4.1-mini").trim();
-  const messages = Array.isArray(body?.messages) ? body.messages : [];
-  const userMsg = messages[0];
+  const model = String(body?.model || env.OPENAI_MODEL || "gpt-5-mini").trim();
+  const input = normalizeOpenAIInput(body);
+  const userMsg = input[0];
   const content = Array.isArray(userMsg?.content) ? userMsg.content : [];
-  const textBlock = content.find((c) => c?.type === "text");
-  const imageBlocks = content.filter((c) => c?.type === "image_url" && c?.image_url?.url);
+  const textBlock = content.find((c) => c?.type === "input_text" && c?.text);
+  const imageBlocks = content.filter((c) => c?.type === "input_image" && c?.image_url);
 
   if (!textBlock || !imageBlocks.length) {
-    return textResponse("WORKER_VALIDATION_ERROR: expected text + image_url blocks.", 400, corsHeaders);
+    return textResponse("WORKER_VALIDATION_ERROR: expected input_text + input_image blocks.", 400, corsHeaders);
   }
 
   const response = await fetch(baseUrl, {
@@ -433,7 +469,7 @@ async function handleOpenAIProxy(body, env, corsHeaders) {
     },
     body: JSON.stringify({
       model,
-      messages,
+      input,
       temperature: 0.2
     })
   });
