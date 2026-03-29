@@ -41,6 +41,35 @@ const THEME_PRESETS = {
   }
 };
 
+const PRICING_SNAPSHOT_DATE = "2026-03-29";
+const MODEL_PRICING_SNAPSHOT = {
+  local: {
+    label: "Local analyzer",
+    price: "Free",
+    detail: "Runs fully in the browser. No API or per-image cost."
+  },
+  cloudflare: {
+    label: "@cf/meta/llama-3.2-11b-vision-instruct",
+    price: "$0.049 / 1M input tokens, $0.68 / 1M output tokens",
+    detail: "Workers AI vision model used by the included Cloudflare proxy."
+  },
+  openai: {
+    label: "gpt-4.1-mini",
+    price: "$0.40 / 1M input tokens, $1.60 / 1M output tokens",
+    detail: "OpenAI multimodal model used through direct mode or the proxy Worker."
+  },
+  future_openai: {
+    label: "gpt-5-mini",
+    price: "$0.25 / 1M input tokens, $2.00 / 1M output tokens",
+    detail: "Potential upgrade path for better reasoning and structured ranking prompts."
+  },
+  future_openai_budget: {
+    label: "gpt-5-nano",
+    price: "$0.05 / 1M input tokens, $0.40 / 1M output tokens",
+    detail: "Potential ultra-low-cost path for high-volume album scoring."
+  }
+};
+
 const ACCEPTED_MIME_PREFIX = "image/";
 const HEIC_EXTENSIONS = new Set(["heic", "heif"]);
 
@@ -1162,6 +1191,109 @@ function buildPrompt(theme) {
   ].join(" ");
 }
 
+function getProviderDisplayName(provider) {
+  switch (provider) {
+    case "cloudflare":
+      return "Cloudflare endpoint (proxy)";
+    case "openai":
+      return "OpenAI endpoint (proxy)";
+    case "cloudflare-direct":
+      return "Cloudflare Direct";
+    case "openai-direct":
+      return "OpenAI Direct";
+    default:
+      return "Local analyzer";
+  }
+}
+
+function getProviderModelLabel(provider, cfProxyModel, cfModel, openaiModel) {
+  if (provider === "cloudflare") return cfProxyModel || DEFAULT_CF_MODEL;
+  if (provider === "cloudflare-direct") return cfModel || DEFAULT_CF_MODEL;
+  if (provider === "openai" || provider === "openai-direct") return openaiModel || DEFAULT_OPENAI_MODEL;
+  return "Built-in browser heuristics";
+}
+
+function getCurrentPricingCard(provider) {
+  if (provider === "cloudflare" || provider === "cloudflare-direct") {
+    return MODEL_PRICING_SNAPSHOT.cloudflare;
+  }
+  if (provider === "openai" || provider === "openai-direct") {
+    return MODEL_PRICING_SNAPSHOT.openai;
+  }
+  return MODEL_PRICING_SNAPSHOT.local;
+}
+
+function buildPresentationSections({
+  provider,
+  albumSize,
+  activeCount,
+  themePrompt,
+  lookalikeThreshold,
+  clusterStrictness,
+  themeStrictness,
+  maxPerCluster,
+  cfProxyModel,
+  cfModel,
+  openaiModel
+}) {
+  const providerLabel = getProviderDisplayName(provider);
+  const providerModel = getProviderModelLabel(provider, cfProxyModel, cfModel, openaiModel);
+  const pricingCard = getCurrentPricingCard(provider);
+  const themeSummary = themePrompt?.trim()
+    ? themePrompt.trim().slice(0, 180)
+    : "No explicit theme prompt, so the system optimizes more generally for quality, clarity, uniqueness, and story value.";
+
+  return {
+    overview: [
+      `The app starts with ${activeCount} uploaded photo(s) and tries to deliver a final album of ${albumSize}.`,
+      `Each image is first normalized in the browser. HEIC/HEIF files are converted to JPEG so the rest of the pipeline sees a consistent format.`,
+      `The current analysis route is ${providerLabel}, using ${providerModel}.`,
+      `Even when AI is enabled, the final answer is not pure model output. The app applies deterministic ranking, duplicate suppression, clustering, and diversity rules on top of the model scores.`
+    ],
+    flow: [
+      "1. Import and prep: images are filtered to supported types, optionally converted from HEIC/HEIF, and stored with preview URLs.",
+      "2. Fingerprint pass: every photo gets a compact visual fingerprint containing average-hash, difference-hash, color histogram, luminance vector, structure grid, aspect ratio, dimensions, timestamps, and a visibility score.",
+      "3. Analysis pass: the selected provider scores each image for quality, composition, emotion, uniqueness, overall score, scene, tags, crop quality, subject clarity, moment strength, distraction, and storytelling.",
+      "4. Theme matching: the app turns the album prompt into keywords and compares them against structured descriptors such as primary subject, setting, shot type, event role, and people/text presence.",
+      "5. Similarity graph: pairwise image similarity is computed from the fingerprints. Similar photos are merged into clusters that represent the same burst, angle, or moment.",
+      "6. Selection pass: a greedy diversity-aware ranking picks cluster champions first, then fills remaining slots using an MMR-style tradeoff between relevance and novelty.",
+      "7. Post-processing: the app removes weak framing, low-visibility photos, and hard lookalikes, then refills from the best remaining candidates if needed."
+    ],
+    algorithms: [
+      "Local scoring algorithm: when running locally or falling back locally, the app estimates contrast, saturation, warmth, brightness, and edge density from a 64x64 canvas sample, then converts them into quality/composition/emotion/uniqueness scores.",
+      "Perceptual fingerprinting: the app builds both `aHash` and `dHash`, plus histograms and coarse structure vectors, so similarity is based on visual content rather than file names.",
+      "Similarity function: weighted similarity blends hash distance, color similarity, saturation, aspect ratio, image scale, luminance vectors, histograms, structure similarity, visibility similarity, and a small burst-timestamp bonus.",
+      "Clustering algorithm: union-find groups photos into clusters when similarity crosses thresholds, especially if they were shot at nearly the same time or appear to be the same scene.",
+      "Theme scoring algorithm: a theme bonus and theme penalty are added on top of the raw AI score. People-focused themes strongly penalize screenshots, documents, bad crops, low face visibility, and weak moments.",
+      "Final ranking algorithm: the app uses a greedy Maximum Marginal Relevance style pass. In simple terms, it rewards high-score photos and subtracts penalties for being too similar to what is already selected.",
+      "Quality gates: after the main pick, the app rejects photos with very low visibility, weak framing, incomplete people, or low storytelling strength, then refills carefully."
+    ],
+    current: [
+      `Current theme prompt: ${themeSummary}`,
+      `Lookalike threshold is ${lookalikeThreshold.toFixed(2)}. Higher means the system is stricter about near-duplicates.`,
+      `Cluster strictness is ${clusterStrictness}/3 and max per cluster is ${maxPerCluster}, which controls how many images from the same moment can survive.`,
+      `Theme strictness is ${themeStrictness}/3, which controls how aggressively off-theme images are pushed down or blocked.`,
+      provider === "local"
+        ? "Failure mode: local mode never depends on an external API, so it is the safest demo path when network or rate limits are a concern."
+        : "Failure mode: if remote batches fail, the app retries them and can fall back to the local analyzer instead of leaving the album empty."
+    ],
+    pricing: [
+      `Pricing snapshot date: ${PRICING_SNAPSHOT_DATE}.`,
+      `Current configured route: ${pricingCard.label} at ${pricingCard.price}. ${pricingCard.detail}`,
+      "OpenAI image requests also consume image input tokens. The exact cost depends on image detail and size, so the practical price per run is best treated as prompt tokens + image tokens + output tokens.",
+      "Cloudflare pricing is also token based, but this project sends one image per request in Cloudflare mode to keep parsing simpler and isolate failures.",
+      "Local mode costs nothing but gives heuristic estimates instead of true vision-model understanding."
+    ],
+    roadmap: [
+      "Option 1: stay hybrid. Keep the current system and improve the explanation layer, logs, and debug export. This is the lowest-risk path.",
+      "Option 2: upgrade the OpenAI provider to a newer model like gpt-5-mini for stronger reasoning over ambiguous shots, better adherence to structured JSON, and cleaner theme enforcement.",
+      "Option 3: add an embedding or reranking stage. The vision model would describe each image first, then a cheaper ranking model would choose the final album from the descriptions.",
+      "Option 4: pre-cluster locally before calling remote AI. That would reduce API usage by scoring only cluster champions first and expanding to alternates only when needed.",
+      "Option 5: persist runs server-side. That would let the team compare multiple albums, share links, and track which settings produced the best outputs."
+    ]
+  };
+}
+
 async function runCloudflareBatch({ photos, themePrompt, appendLog, endpoint, proxyToken, model, signal }) {
   const resolvedEndpoint = normalizeEndpointUrl(endpoint);
   if (!isAbsoluteHttpUrl(resolvedEndpoint)) {
@@ -1898,6 +2030,35 @@ export default function App() {
       themePreset,
       themePrompt,
       themeStrictness
+    ]
+  );
+  const presentationSections = useMemo(
+    () =>
+      buildPresentationSections({
+        provider,
+        albumSize,
+        activeCount: activePhotos.length,
+        themePrompt,
+        lookalikeThreshold,
+        clusterStrictness,
+        themeStrictness,
+        maxPerCluster,
+        cfProxyModel,
+        cfModel,
+        openaiModel
+      }),
+    [
+      provider,
+      albumSize,
+      activePhotos.length,
+      themePrompt,
+      lookalikeThreshold,
+      clusterStrictness,
+      themeStrictness,
+      maxPerCluster,
+      cfProxyModel,
+      cfModel,
+      openaiModel
     ]
   );
 
@@ -2805,6 +2966,73 @@ export default function App() {
               {logs.length ? logs.map((line, i) => <pre key={`${line}-${i}`}>{line}</pre>) : <pre>No activity yet.</pre>}
             </div>
           </section>
+
+          <section className="explain-panel card">
+            <h2>How This Works Under The Hood</h2>
+            <p>
+              This section is designed for demos. It explains the current pipeline, algorithms, provider, and cost model using the live settings on screen.
+            </p>
+
+            <div className="explain-grid">
+              <article className="explain-card">
+                <h3>Plain-English Overview</h3>
+                <ul>
+                  {presentationSections.overview.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </article>
+
+              <article className="explain-card">
+                <h3>Pipeline Flow</h3>
+                <ul>
+                  {presentationSections.flow.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </article>
+
+              <article className="explain-card">
+                <h3>Algorithms</h3>
+                <ul>
+                  {presentationSections.algorithms.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </article>
+
+              <article className="explain-card">
+                <h3>Current Run Settings</h3>
+                <ul>
+                  {presentationSections.current.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </article>
+
+              <article className="explain-card">
+                <h3>Pricing Snapshot</h3>
+                <ul>
+                  {presentationSections.pricing.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </article>
+
+              <article className="explain-card">
+                <h3>Ways Forward</h3>
+                <ul>
+                  {presentationSections.roadmap.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+                <p className="roadmap-note">
+                  Forward-looking model references: {MODEL_PRICING_SNAPSHOT.future_openai.label} ({MODEL_PRICING_SNAPSHOT.future_openai.price}) and{" "}
+                  {MODEL_PRICING_SNAPSHOT.future_openai_budget.label} ({MODEL_PRICING_SNAPSHOT.future_openai_budget.price}).
+                </p>
+              </article>
+            </div>
+          </section>
         </section>
       ) : null}
 
@@ -2913,6 +3141,33 @@ export default function App() {
                   </article>
                 );
               })}
+            </div>
+          </section>
+
+          <section className="explain-panel card">
+            <h2>Presentation Summary</h2>
+            <p>
+              The selected album is the result of two layers working together: model scoring for semantic understanding and deterministic post-processing for duplicates, diversity, and theme fit.
+            </p>
+            <div className="explain-grid compact">
+              <article className="explain-card">
+                <h3>What To Say In One Minute</h3>
+                <ul>
+                  <li>The AI looks at each image and gives structured scores plus a short description.</li>
+                  <li>The app then compares every photo to every other photo to find bursts and near-duplicates.</li>
+                  <li>The final selector does not just pick the top scores. It deliberately spreads choices across different scenes and moments.</li>
+                  <li>If the AI API is unhealthy, the system can still fall back to a local heuristic analyzer instead of failing silently.</li>
+                </ul>
+              </article>
+              <article className="explain-card">
+                <h3>Current Provider</h3>
+                <ul>
+                  <li>Route: {getProviderDisplayName(provider)}</li>
+                  <li>Model: {getProviderModelLabel(provider, cfProxyModel, cfModel, openaiModel)}</li>
+                  <li>Pricing snapshot: {getCurrentPricingCard(provider).price}</li>
+                  <li>Theme strictness: {themeStrictness}/3, cluster strictness: {clusterStrictness}/3, max per cluster: {maxPerCluster}</li>
+                </ul>
+              </article>
             </div>
           </section>
 

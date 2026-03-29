@@ -36,6 +36,7 @@ select {
 .preview h2,
 .log-console h2,
 .diagnostics h2,
+.explain-panel h2,
 .modal h3 {
   margin: 0;
   font-size: calc(1.325rem + 0.9vw);
@@ -354,6 +355,48 @@ input[type="range"] {
   overflow-wrap: anywhere;
 }
 
+.explain-panel p {
+  margin-top: 0.75rem;
+  color: var(--bs-secondary-color);
+}
+
+.explain-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.explain-grid.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.explain-card {
+  padding: 1rem;
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius-lg);
+}
+
+.explain-card h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.explain-card ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.explain-card li + li {
+  margin-top: 0.5rem;
+}
+
+.roadmap-note {
+  margin-bottom: 0;
+  font-size: 0.875rem;
+}
+
 .diagnostics h2,
 .preview h2 {
   margin-bottom: 1rem;
@@ -532,6 +575,11 @@ footer {
 @media (max-width: 920px) {
   .step-progress,
   .stats {
+    grid-template-columns: 1fr;
+  }
+
+  .explain-grid,
+  .explain-grid.compact {
     grid-template-columns: 1fr;
   }
 
