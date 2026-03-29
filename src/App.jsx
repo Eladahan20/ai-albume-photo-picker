@@ -710,10 +710,11 @@ function applySmartSelection({
   const strictCluster = clamp(Number(clusterStrictness || 2), 1, 3);
   const strictScale = strictCluster / 2;
   const nearLookalikeThreshold = clamp(Number(lookalikeThreshold || 0.86), 0.75, 0.95);
-  const clusterEdgeThreshold = clamp(nearLookalikeThreshold - 0.04, 0.74, 0.92);
+  const clusterMergeBias = strictCluster === 1 ? 0.14 : strictCluster === 2 ? 0.11 : 0.09;
+  const clusterEdgeThreshold = clamp(nearLookalikeThreshold - clusterMergeBias, 0.68, 0.9);
   const hardDedupeThreshold = clamp(nearLookalikeThreshold - 0.08, 0.7, 0.88);
   const maxClusterPicks = clamp(Number(maxPerCluster || 2), 1, 6);
-  const clusterDiameterThreshold = clamp(clusterEdgeThreshold + 0.02, 0.78, 0.95);
+  const clusterDiameterThreshold = clamp(clusterEdgeThreshold - 0.03, 0.62, 0.86);
 
   const themeProfile = buildThemeProfile(themePrompt);
   const sceneCounts = analyses.reduce((acc, item) => {
@@ -829,11 +830,16 @@ function applySmartSelection({
       const timeDiff = Math.abs((aFp?.lastModified || 0) - (bFp?.lastModified || 0));
       const sameMoment = timeDiff > 0 && timeDiff <= 20000;
       const sameScene = candidates[i].sceneKey === candidates[j].sceneKey;
+      const sameOrientation =
+        Math.abs((aFp?.ratio || 0) - (bFp?.ratio || 0)) <= 0.22;
       const shouldMerge =
         sim >= 0.96 ||
         (sim >= 0.9 && sameMoment) ||
         (sim >= 0.93 && sameScene && timeDiff > 0 && timeDiff <= 120000) ||
-        (sim >= clusterEdgeThreshold + 0.03 && sameMoment);
+        (sim >= clusterEdgeThreshold + 0.03 && sameMoment) ||
+        (sim >= clusterEdgeThreshold && sameScene) ||
+        (sim >= clusterEdgeThreshold - 0.03 && sameScene && sameOrientation) ||
+        (sim >= clusterEdgeThreshold - 0.05 && timeDiff > 0 && timeDiff <= 90000 && sameOrientation);
       if (shouldMerge) {
         union(i, j);
       }
@@ -853,13 +859,17 @@ function applySmartSelection({
     clustersMap.get(cid).push(item);
   }
   const splitByDiameter = (clusterItems) => {
+    if (clusterItems.length <= 6) return [clusterItems];
+
     const rankedItems = [...clusterItems].sort((a, b) => b.adjustedBase - a.adjustedBase);
     const groups = [];
     for (const item of rankedItems) {
       let placed = false;
       for (const group of groups) {
+        const avgSim =
+          group.reduce((sum, gItem) => sum + simMatrix[item.candidateIdx][gItem.candidateIdx], 0) / Math.max(1, group.length);
         const minSim = group.reduce((min, gItem) => Math.min(min, simMatrix[item.candidateIdx][gItem.candidateIdx]), 1);
-        if (minSim >= clusterDiameterThreshold) {
+        if (avgSim >= clusterDiameterThreshold || minSim >= clusterDiameterThreshold + 0.08) {
           group.push(item);
           placed = true;
           break;
@@ -867,7 +877,27 @@ function applySmartSelection({
       }
       if (!placed) groups.push([item]);
     }
-    return groups;
+
+    if (groups.length <= 1) return groups;
+
+    const primary = groups[0];
+    for (let i = 1; i < groups.length; i += 1) {
+      const group = groups[i];
+      const bridgeSim =
+        group.reduce(
+          (sum, item) =>
+            sum +
+            primary.reduce((inner, pItem) => inner + simMatrix[item.candidateIdx][pItem.candidateIdx], 0) /
+              Math.max(1, primary.length),
+          0
+        ) / Math.max(1, group.length);
+      if (bridgeSim >= clusterDiameterThreshold - 0.03) {
+        primary.push(...group);
+        groups[i] = [];
+      }
+    }
+
+    return groups.filter((group) => group.length);
   };
 
   const clusters = Array.from(clustersMap.values())
