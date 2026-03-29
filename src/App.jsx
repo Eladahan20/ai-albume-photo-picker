@@ -1198,6 +1198,7 @@ function applySmartSelection({
         clusterId: cluster.id,
         size: cluster.size,
         selectedCount: ranked.filter((item) => selectedPostSet.has(item.index)).length,
+        photoIndexes: ranked.map((item) => item.index),
         topIndexes: ranked.slice(0, 4).map((item) => item.index)
       };
     })
@@ -2567,7 +2568,7 @@ export default function App() {
       const scoredByIndex = new Map(scored.map((s) => [s.index, s]));
       const clusterRows = (diagnostics?.clusters || []).map((cluster) => ({
         ...cluster,
-        items: (cluster.topIndexes || []).map((idx) => {
+        items: (cluster.photoIndexes || cluster.topIndexes || []).map((idx) => {
           const photo = activePhotos[idx];
           const analysis = scoredByIndex.get(idx);
           return {
