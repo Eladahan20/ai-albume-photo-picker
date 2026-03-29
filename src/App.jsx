@@ -1452,6 +1452,7 @@ async function runOpenAIProxyBatch({ photos, themePrompt, appendLog, endpoint, p
 
   const prompt = buildPrompt(themePrompt);
   const content = [{ type: "input_text", text: prompt }];
+  const legacyContent = [{ type: "text", text: prompt }];
 
   for (const photo of photos) {
     throwIfAborted(signal);
@@ -1460,6 +1461,12 @@ async function runOpenAIProxyBatch({ photos, themePrompt, appendLog, endpoint, p
       type: "input_image",
       image_url: `data:image/jpeg;base64,${b64}`,
       detail: "low"
+    });
+    legacyContent.push({
+      type: "image_url",
+      image_url: {
+        url: `data:image/jpeg;base64,${b64}`
+      }
     });
   }
 
@@ -1485,6 +1492,12 @@ async function runOpenAIProxyBatch({ photos, themePrompt, appendLog, endpoint, p
             {
               role: "user",
               content
+            }
+          ],
+          messages: [
+            {
+              role: "user",
+              content: legacyContent
             }
           ]
         })
